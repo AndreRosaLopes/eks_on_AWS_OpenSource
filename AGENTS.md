@@ -33,9 +33,13 @@
 After creating or modifying any file:
 
 1. Run `git log -1` and `git status`.
-2. Propose `git add` with each changed file (never `git add .`) and `git commit` with a message summarizing the changes.
-3. If a previous suggestion was not committed, include all pending files and changes.
-4. End with `git push`.
+2. Propose `git add` with each changed file (never `git add .`) and `git commit` with a short,
+   plain message (one line, imperative, up to 72 characters) describing the change.
+3. If a previous suggestion was not committed, propose one commit per purpose, covering all
+   pending files.
+4. The commit message contains only the description of the change (e.g., never add
+   "Co-Authored-By: ...").
+5. End with `git push`.
 
 ## 4. Environment
 
