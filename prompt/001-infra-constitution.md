@@ -35,8 +35,9 @@ so `/speckit-plan` can check it as a gate.
 8. **Cloud portability.** The solution MUST be interchangeable across at least AWS, Azure
    and GCP, with minimal cloud provider lock-in. Prefer Kubernetes-native, cloud-neutral
    components; cloud-specific code is confined to Terraform modules and resource annotations.
-9. **Least privilege.** Cloud permissions are scoped per workload (no shared node-role
-   permissions for application access).
+9. **Node-level cloud permissions.** Cloud permissions are granted through a single node role
+   shared by every workload, for simplicity; to be revisited when finer-grained access is
+   needed. Access to data by users and groups (including LGPD) is controlled at the data layer.
 10. **Pinned versions.** Terraform, providers, modules, Helm charts and images use pinned
     versions.
 11. **Verified changes.** Every change passes `terraform fmt`, `terraform validate` and a
