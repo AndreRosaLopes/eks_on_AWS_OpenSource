@@ -69,8 +69,7 @@ confirm each run happens as requested.
    workload runs.
 2. **Given** a workload, **When** the technical team starts it on demand, **Then** it runs.
 3. **Given** a workload run by tumbling windows, **When** a window closes, **Then** the workload
-   processes exactly that window. Window granularity: [NEEDS CLARIFICATION: tumbling window
-   granularity, to be defined by the user].
+   processes exactly that window; the window size is set per workload.
 
 ---
 

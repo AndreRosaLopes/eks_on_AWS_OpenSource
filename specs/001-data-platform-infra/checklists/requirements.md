@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain
+- [x] No [NEEDS CLARIFICATION] markers remain
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,9 +31,8 @@
 
 ## Notes
 
-- One marker remains on purpose: tumbling window granularity (User Story 3); the user will define
-  it at the right time. Resolve it with `/speckit-clarify` before `/speckit-plan`, or carry it
-  into the plan as an open item.
+- Tumbling window granularity is not an infrastructure decision: the window size is a
+  per-workload setting of the orchestration (User Story 3).
 - Resolved with the user: external systems use one credential per system (FR-013); growth up to
   1000x, about 1 TB per day (FR-017).
 - "AWS, Azure, GCP", "medallion architecture" and "star schema" come from the user's requirements;
