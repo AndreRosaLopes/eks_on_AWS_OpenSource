@@ -33,6 +33,11 @@ Prices are on-demand list prices in USD; a month is 730 hours. AWS prices are fo
 | D-002 | Outbound internet access for private subnets | Decided: A. One zonal NAT gateway |
 | D-003 | Number of Availability Zones | Decided: A. 2 AZs |
 | D-004 | Cloud permissions per workload | Decided: C. Single node role |
+| D-005 | Terraform state storage | Decided: A. S3 with native lock file |
+| D-006 | Access to the cluster API (kubectl) | Decided: B. Open public endpoint + private endpoint |
+| D-007 | Instance family of the nodes | Decided: C. m7g.large for all node groups |
+| D-008 | Argo CD access to the Git repository | Decided: A. Public repository |
+| D-009 | Kubernetes version | Decided: B. 1.36 |
 
 ---
 
@@ -463,6 +468,890 @@ original principle IX, with the same federated model as Azure and GCP.
 - [EKS Pod Identity restrictions](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html)
 - [Microsoft Entra Workload ID on AKS](https://learn.microsoft.com/en-us/azure/aks/workload-identity-deploy-cluster)
 - [Workload Identity Federation for GKE](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/workload-identity)
+
+---
+
+## D-005 Terraform state storage
+
+**Status**: Decided
+
+### Context
+
+- Constitution V (infrastructure as code), VII (separate applies: `foundation` and `bootstrap`,
+  each with its own state), IV (no secrets in Git), and the reproducibility principle.
+- The state records every resource Terraform manages and may contain sensitive values (e.g., a
+  repository credential passed to the bootstrap, D-008); it must not be stored in Git.
+- The state storage itself must exist before the first `terraform init`: it is created once by a
+  small root module with local state (or by hand once and then imported), a known
+  "chicken-and-egg" step.
+
+### Options
+
+**A. S3 with native lock file** — state in an S3 bucket (versioned, encrypted); locking through a
+lock file in the same bucket (`use_lockfile = true`).
+**B. S3 with DynamoDB locking** — state in S3; locking through a DynamoDB table. HashiCorp marks
+DynamoDB-based locking as deprecated, to be removed in a future minor version.
+**C. HCP Terraform** — HashiCorp's SaaS stores state and runs plans; pricing not verified here.
+**D. Local state** — state file on the workstation.
+
+### Cost
+
+| Option | Cost |
+|---|---|
+| A | S3 storage and requests for a few small files: cents per month |
+| B | Same as A + DynamoDB on-demand for a few lock operations: cents per month |
+| C | SaaS subscription (not verified) |
+| D | None |
+
+### Equivalents in the other clouds
+
+| Cloud | Backend | Locking |
+|---|---|---|
+| AWS | `s3` | Lock file (A) or DynamoDB (B) |
+| Azure | `azurerm` (Blob Storage) | Native blob lease |
+| GCP | `gcs` (Cloud Storage) | Native |
+
+### Trade-offs
+
+| | A. S3 + lock file | B. S3 + DynamoDB | C. HCP Terraform | D. Local |
+|---|---|---|---|---|
+| Resources to create | One bucket | Bucket + table | Account and workspaces | None |
+| Locking | ✅ | ✅ (deprecated) | ✅ | ❌ |
+| Shared across workstations | ✅ | ✅ | ✅ | ❌ |
+| Recovery of a previous state | ✅ bucket versioning | ✅ | ✅ | ❌ |
+| Future-proof | ✅ | ❌ deprecated | ✅ | — |
+| Data outside the cloud account | No | No | Yes (SaaS) | Workstation |
+
+### Principle fit
+
+| Principle | A | B | C | D |
+|---|---|---|---|---|
+| III. Simplicity | ✅ | ⚠️ | ⚠️ | ✅ |
+| IV / reproducibility | ✅ | ✅ | ✅ | ❌ |
+| VIII. Portability | ✅ same pattern (`azurerm`, `gcs`) | ⚠️ | ✅ | — |
+
+### Recommendation
+
+**A. S3 with native lock file**: one bucket, versioned and encrypted, with a separate state key
+for `foundation` and `bootstrap` (VII); the same pattern exists in Azure and GCP.
+
+### Decision
+
+- **Decision**: A. S3 with native lock file.
+- **Rationale**: the user chose S3; option A is the S3 variant that is not deprecated
+  (option B, DynamoDB locking, is deprecated by HashiCorp).
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
+
+---
+
+## D-006 Access to the cluster API (kubectl)
+
+**Status**: Decided
+
+### Context
+
+- The operator runs `kubectl`, `kubectl port-forward` (admin interfaces) and Terraform from the
+  workstation; nodes in private subnets must also reach the API.
+- By default the EKS API endpoint is public; every request is still authenticated (IAM) and
+  authorized (Kubernetes RBAC).
+- Constitution II (cost), III (simplicity), VIII (portability).
+- Operator permissions use EKS access entries (authentication mode `API`), the means AWS now
+  prefers over the `aws-auth` ConfigMap.
+
+### Options
+
+**A. Public endpoint restricted to the operator's IP + private endpoint** — the public endpoint
+accepts only listed CIDRs (e.g., the operator's public IP); nodes reach the API through the
+private endpoint inside the VPC.
+**B. Public endpoint open to the internet + private endpoint** — authentication and RBAC are the
+only protection.
+**C. Private endpoint only** — the API is reachable only from inside the VPC; the operator needs
+a VPN, a bastion or another path into the VPC.
+
+### Cost
+
+| Option | Cost |
+|---|---|
+| A | No charge |
+| B | No charge |
+| C | Extra: a VPN endpoint or a bastion instance (not estimated here) |
+
+### Equivalents in the other clouds
+
+| Cloud | Restricted public | Private only |
+|---|---|---|
+| AWS | `publicAccessCidrs` | Private endpoint |
+| Azure | AKS API server authorized IP ranges | AKS private cluster |
+| GCP | GKE authorized networks | GKE private endpoint |
+
+### Trade-offs
+
+| | A. Restricted public | B. Open public | C. Private only |
+|---|---|---|---|
+| Exposure | Only listed IPs | Internet (authenticated) | None |
+| Operator access | Direct; the CIDR must be updated if the operator's IP changes | Direct | Through VPN/bastion |
+| Cost | None | None | VPN or bastion |
+| Simplicity | ✅ | ✅ | ❌ |
+
+### Principle fit
+
+| Principle | A | B | C |
+|---|---|---|---|
+| II. Cost | ✅ | ✅ | ⚠️ |
+| III. Simplicity | ✅ | ✅ | ❌ |
+| VIII. Portability | ✅ | ✅ | ✅ |
+
+### Risks
+
+- A: a changing home IP blocks access until the CIDR variable is updated and applied.
+- B: any leaked credential can reach the API from anywhere.
+- C: extra component and cost.
+
+### Recommendation
+
+**A. Public endpoint restricted to the operator's IP, plus the private endpoint for nodes**: no
+cost, simple, and the API is not open to the internet; the allowed CIDR is a Terraform variable.
+
+### Decision
+
+- **Decision**: B. Public endpoint open to the internet, plus the private endpoint for nodes.
+- **Rationale**: the simplest option; security relies on IAM authentication and Kubernetes RBAC.
+  Same setup as the reference project, where GitHub Actions runners (changing IPs) also reach
+  the cluster.
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- [EKS best practices: cluster endpoint](https://docs.aws.amazon.com/eks/latest/best-practices/identity-and-access-management.html)
+- [Restricting access to the public endpoint](https://docs.aws.amazon.com/eks/latest/eksctl/vpc-cluster-access.html)
+- [Cluster networking for worker nodes](https://aws.amazon.com/blogs/containers/de-mystifying-cluster-networking-for-amazon-eks-worker-nodes/)
+- [EKS access entries](https://aws.amazon.com/blogs/containers/a-deep-dive-into-simplified-amazon-eks-access-management-controls/)
+
+---
+
+## D-007 Instance family of the nodes
+
+**Status**: Decided
+
+### Context
+
+- D-001: two node groups, an On-Demand base (Argo CD, Airflow control components, catalogs,
+  databases) and a Spot group for interruptible jobs.
+- The base components are mostly idle (N-001); the jobs use CPU in bursts.
+- Constitution II (cost), VIII (portability).
+
+### Options (2 vCPU, 8 GiB, On-Demand, `us-east-2`)
+
+| Option | Instance | Architecture | vCPU (physical cores) | Sustained CPU | Network (up to) | Price/hour |
+|---|---|---|---|---|---|---|
+| A. Intel | m6i.large | x86 | 2 (1 core, 2 threads) | 100% | 12.5 Gbps | US$ 0.0960 |
+| B. AMD | m6a.large | x86 | 2 (1 core, 2 threads) | 100% | 12.5 Gbps | US$ 0.0864 |
+| C. Graviton | m7g.large | arm64 | 2 (2 cores) | 100% | 12.5 Gbps | US$ 0.0816 |
+| D1. Burstable Intel | t3.large | x86 | 2 (1 core, 2 threads) | 30% baseline + credits | 5 Gbps | US$ 0.0832 |
+| D2. Burstable Graviton | t4g.large | arm64 | 2 (2 cores) | 30% baseline + credits | 5 Gbps | US$ 0.0672 |
+
+Burstable (D) instances deliver a baseline CPU of 30% and burst above it with credits. They
+launch in `unlimited` mode by default: if the average CPU over 24 hours, or over the instance
+lifetime when shorter, exceeds the baseline, the extra is billed per vCPU-hour (US$ 0.05 for T3,
+US$ 0.04 for T4g); surplus credits are charged at the latest when the instance stops. AWS
+recommends `standard` mode for short-lived Spot instances to avoid surplus charges.
+
+### Effective price per hour by average CPU (same compute: 2 vCPU, 8 GiB)
+
+Burstable: fixed price + surplus above the 30% baseline. Non-burstable: the same price at any
+usage. US$ per hour, per node.
+
+| Average CPU | D1. t3.large | A. m6i.large | B. m6a.large | D2. t4g.large | C. m7g.large |
+|---|---|---|---|---|---|
+| 10% | 0.0832 | 0.0960 | 0.0864 | **0.0672** | 0.0816 |
+| 30% (baseline) | 0.0832 | 0.0960 | 0.0864 | **0.0672** | 0.0816 |
+| 40% | 0.0932 | 0.0960 | 0.0864 | **0.0752** | 0.0816 |
+| 50% | 0.1032 | 0.0960 | 0.0864 | 0.0832 | **0.0816** |
+| 75% | 0.1282 | 0.0960 | 0.0864 | 0.1032 | **0.0816** |
+| 100% | 0.1532 | 0.0960 | 0.0864 | 0.1232 | **0.0816** |
+
+### Break-even: average CPU above which the burstable costs more
+
+| Burstable | vs. A. m6i.large | vs. B. m6a.large | vs. C. m7g.large |
+|---|---|---|---|
+| D1. t3.large | ≈ 43% | ≈ 33% | Never cheaper (US$ 0.0832 > US$ 0.0816 even at baseline) |
+| D2. t4g.large | ≈ 66% | ≈ 54% | ≈ 48% |
+
+The fairest comparisons stay within the same architecture: t3 vs. m6i/m6a (x86) and t4g vs.
+m7g (arm64). The break-even treats every vCPU as equal; m7g has two physical cores while t3,
+m6i and m6a have one core with two threads, so m7g tends to deliver more per vCPU.
+
+Smaller sizes (micro, small, medium) were also compared: the price per GiB is the same within a
+family, but smaller nodes lose a larger share of memory to Kubernetes reservations and system
+pods (≈ 29% on micro, ≈ 11% on medium, ≈ 8% on large) and accept fewer pods (4 on micro, 17 on
+medium, 29–35 on large); m6i and m6a have no size below large.
+
+### arm64 availability (for C and D2)
+
+Multi-architecture images (amd64 and arm64) were verified for: Airflow (`apache/airflow`), Trino
+(`trinodb/trino`), Polaris (`apache/polaris`), OpenMetadata (`openmetadata/server`), Airbyte
+(`airbyte/server` and `airbyte/workload-launcher` 2.4.0; connector `airbyte/source-postgres`),
+Grafana, Prometheus and Argo CD (`quay.io/argoproj/argocd`, multi-architecture manifest). Each
+Airbyte connector and every image built by the project must also be checked.
+
+### Equivalents in the other clouds
+
+| Cloud | x86 general purpose | arm64 general purpose | Burstable |
+|---|---|---|---|
+| AWS | m6i, m6a | m7g (Graviton) | t3, t4g |
+| Azure | Dsv5, Dasv5 | Dpsv5/Dpsv6 (Ampere/Cobalt) | B-series |
+| GCP | n2, n2d | t2a, c4a (Axion) | e2 shared-core |
+
+### Trade-offs
+
+| | A. Intel | B. AMD | C. Graviton | D. Burstable |
+|---|---|---|---|---|
+| Price | Highest | −10% | −15% | −13% (t3) / −30% (t4g) |
+| Image compatibility | All | All | Needs arm64 images | t3 all; t4g needs arm64 |
+| Sustained CPU | Full | Full | Full | Baseline + credits; surplus billed |
+| Fit for the idle base | ✅ | ✅ | ✅ | ✅ best |
+| Fit for Spot jobs | ✅ | ✅ | ✅ | ⚠️ surplus charges in `unlimited` mode |
+
+### Principle fit
+
+| Principle | A | B | C | D |
+|---|---|---|---|---|
+| II. Cost | ⚠️ | ✅ | ✅ | ✅ base / ⚠️ jobs |
+| III. Simplicity | ✅ | ✅ | ⚠️ arm64 check per image | ⚠️ credit monitoring |
+| VIII. Portability | ✅ | ✅ | ✅ arm64 exists in the three clouds | ✅ |
+
+### Recommendation
+
+**Base group: D2 (t4g.large, burstable Graviton)**, cheapest for mostly idle components; **Spot
+group: C (Graviton, non-burstable, e.g., m7g)** for CPU-heavy jobs. Fallback to x86 (B) for any
+image without arm64.
+
+### Decision
+
+- **Decision**: C. m7g.large (Graviton, arm64) for all node groups (On-Demand base and Spot).
+- **Rationale**: simplicity, one instance type everywhere. CPU usage of the base group (Argo CD,
+  Airflow scheduler and other control components) will be measured; if it stays low, the base
+  group may move to burstable (D2. t4g.large).
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- AWS Price List API (`AmazonEC2`, `us-east-2`), queried through the AWS MCP Server.
+- Amazon EC2 `DescribeInstanceTypes` (`us-east-2`), queried through the AWS MCP Server.
+- [EC2 On-Demand pricing: T4g/T3 Unlimited Mode](https://aws.amazon.com/ec2/pricing/on-demand/)
+- [Unlimited mode for burstable instances](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-unlimited-mode.html)
+- [Unlimited mode concepts (t3.large baseline)](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/burstable-performance-instances-unlimited-mode-concepts.html)
+- [Amazon EC2 T3 instances](https://aws.amazon.com/ec2/instance-types/t3/)
+- Docker Hub and Quay registry APIs (image architectures), queried on 2026-10-09.
+
+---
+
+## D-008 Argo CD access to the Git repository
+
+**Status**: Decided
+
+### Context
+
+- Argo CD reads this repository (`github.com/AndreRosaLopes/eks_on_AWS_OpenSource`). An
+  unauthenticated request to the GitHub API for it returns "not found", so the repository is
+  private (or not reachable anonymously).
+- Constitution IV: no credential in Git. A credential for a private repository must be given to
+  the cluster by the bootstrap from outside the repository.
+- Constitution III (simplicity).
+
+### Options
+
+**A. Make the repository public** — Argo CD reads it anonymously; no credential at all.
+**B. Deploy key** — a read-only SSH key bound to this repository; its private part is given to
+Argo CD by the bootstrap.
+**C. GitHub App** — an app installed on the repository; Argo CD uses its private key to obtain
+short-lived tokens.
+**D. Fine-grained personal access token** — a token of the user's account, read-only on this
+repository, with an expiration date.
+
+### Cost
+
+No charge for any option.
+
+### Equivalents in the other clouds
+
+Not cloud-dependent: the same options apply with Argo CD on AKS or GKE.
+
+### Trade-offs
+
+| | A. Public | B. Deploy key | C. GitHub App | D. Fine-grained token |
+|---|---|---|---|---|
+| Credential to keep | None | One SSH key | App private key | Token |
+| Scope | — | One repository, read-only | Repositories where installed | Chosen repositories |
+| Expiration | — | None | Short-lived tokens | Expires; must be renewed |
+| Tied to a person | — | No | No | Yes |
+| Setup | None | Low | Medium | Low |
+| Code visibility | Everyone | Private | Private | Private |
+
+### Principle fit
+
+| Principle | A | B | C | D |
+|---|---|---|---|---|
+| III. Simplicity | ✅ | ✅ | ⚠️ | ✅ |
+| IV. No secrets in Git | ✅ nothing to protect | ✅ if kept outside Git | ✅ if kept outside Git | ✅ if kept outside Git |
+
+### Risks
+
+- A: everything in the repository becomes public; safe only while no secret is ever committed (IV).
+- B, C, D: the credential must be stored outside Git and reach the bootstrap; if passed to
+  Terraform it is also stored in the state (encrypted bucket, D-005).
+- D: expiration breaks delivery until renewed.
+
+### Recommendation
+
+The repository's visibility is the user's choice. If it can be public, **A** is the simplest.
+If it must stay private, **B. Deploy key**: read-only, one repository, no expiration and not
+tied to a person.
+
+### Decision
+
+- **Decision**: A. Make the repository public; Argo CD reads it anonymously, with no credential.
+- **Rationale**: the simplest option; constitution IV already keeps secrets out of Git. Before
+  the change, the Git history (14 commits) was scanned for credentials, keys and tokens, with no
+  findings. The repository was made public on 2026-10-09 and an anonymous request to the GitHub
+  API now returns it.
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- GitHub REST API (`GET /repos/AndreRosaLopes/eks_on_AWS_OpenSource`, unauthenticated: 404),
+  queried on 2026-10-09.
+
+---
+
+## D-009 Kubernetes version
+
+**Status**: Decided
+
+### Context
+
+- Constitution X (pinned versions).
+- Cost: EKS standard support costs US$ 0.10/h per cluster; after the end of standard support the
+  cluster moves to extended support at US$ 0.60/h, so the cluster must be upgraded before that
+  date.
+- The Cluster Autoscaler (D-001) releases one version per Kubernetes minor version.
+
+### Options (EKS versions in standard support, `us-east-2`, on 2026-10-09)
+
+| Option | Version | Released | End of standard support | EKS default |
+|---|---|---|---|---|
+| A | 1.37 | 2026-10-01 | 2027-12-01 | No |
+| B | 1.36 | 2026-06-02 | 2027-08-02 | Yes |
+| C | 1.35 | 2026-01-27 | 2027-03-27 | No |
+
+Latest Cluster Autoscaler releases: 1.36.1, 1.35.2, 1.34.5 (2026-07-23); **no 1.37 release
+yet**.
+
+### Equivalents in the other clouds
+
+AKS and GKE publish their own supported versions and calendars; the Kubernetes minor version is
+the same concept in the three clouds.
+
+### Trade-offs
+
+| | A. 1.37 | B. 1.36 | C. 1.35 |
+|---|---|---|---|
+| Standard support left | ≈ 14 months | ≈ 10 months | ≈ 5.5 months |
+| Matching Cluster Autoscaler | ❌ not released | ✅ 1.36.1 | ✅ 1.35.2 |
+| Helm chart and add-on compatibility | Newest; may lag | Established | Established |
+
+### Principle fit
+
+| Principle | A | B | C |
+|---|---|---|---|
+| II. Cost (avoid extended support) | ✅ | ✅ | ⚠️ earlier upgrade |
+| X. Pinned versions | ✅ | ✅ | ✅ |
+
+### Recommendation
+
+**B. 1.36**: EKS default, a matching Cluster Autoscaler release exists, and about 10 months of
+standard support; plan the upgrade to 1.37 once its autoscaler is released.
+
+### Decision
+
+- **Decision**: B. Kubernetes 1.36.
+- **Rationale**: the user's rule is to always use the newest stable version possible; 1.36 is the
+  newest version with a matching Cluster Autoscaler release.
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- Amazon EKS `DescribeClusterVersions` (`us-east-2`), queried through the AWS MCP Server on 2026-10-09.
+- [Cluster Autoscaler releases](https://github.com/kubernetes/autoscaler/releases), queried on 2026-10-09.
+
+---
+
+## P1 Ingestion decisions
+
+| ID | Decision | Status |
+|---|---|---|
+| D-010 | PostgreSQL for the platform metadata | Decided: A. Bundled database of each Helm chart |
+| D-011 | Secrets outside Git | Decided: `.env` → Terraform variables → Kubernetes Secrets |
+| D-012 | Writing the bronze layer as Iceberg | Decided: A. Polaris in P1 |
+| D-013 | Location of the internal sources | Decided: same as the reference project (sample PostgreSQL in the cluster) |
+| D-014 | PostgreSQL for Polaris | Decided: A. Own PostgreSQL as plain YAML |
+| D-015 | Block storage driver for persistent volumes | Decided: A. EKS managed add-on in Terraform |
+
+What P1 needs, from the official documentation:
+- **Airbyte** (Helm chart V2; Airbyte 2.1+ supports only chart V2) needs a PostgreSQL database
+  (bundled or external, version 13 or later) and object storage for state and logs (bundled
+  MinIO or S3; S3 supports authentication by instance profile, which matches D-004).
+- **Iceberg on S3** (user decision: Iceberg tables only) is written by Airbyte's *S3 Data Lake*
+  destination, which supports the REST, AWS Glue, Nessie and **Polaris** catalogs.
+- **Polaris** keeps its catalog in memory by default (lost on restart, not for production); the
+  documented production setup is PostgreSQL (`relational-jdbc`).
+
+---
+
+## D-010 PostgreSQL for the platform metadata
+
+**Status**: Decided
+
+### Context
+
+- Airbyte (P1) and Polaris (P1, see D-012) need PostgreSQL; Airflow (P3), OpenMetadata (P6) and,
+  possibly, the BI tool (P4) will also need a database.
+- Constitution II: "State MUST be always on and managed"; capacity scales with demand and cost
+  tends to zero when idle. Constitution III (simplicity), VIII (portability).
+- Encryption only where it adds no cost (spec FR-005).
+
+### Options
+
+**A. Bundled database of each Helm chart** — each component runs its own PostgreSQL pod with a
+persistent volume (Polaris has no bundled database, so it would need another one).
+**B. One shared in-cluster PostgreSQL managed by an operator (e.g., CloudNativePG)** — one
+PostgreSQL cluster in Kubernetes, one database per component, on a persistent volume.
+**C. Amazon RDS for PostgreSQL, one shared instance** — managed by AWS; one database per
+component.
+**D. Aurora PostgreSQL Serverless v2 with scale to zero** — managed; pauses after a period
+without connections (minimum 5 minutes) and resumes in up to about 15 seconds.
+
+### Cost (`us-east-2`)
+
+| Option | Compute | Storage | Example: 20 GB, all month |
+|---|---|---|---|
+| A | Node memory and CPU (one pod per component) | EBS gp3 US$ 0.08/GB-month per volume | ≈ US$ 1.60 per volume + node capacity |
+| B | Node memory and CPU (one cluster) | EBS gp3 US$ 0.08/GB-month | ≈ US$ 1.60 + node capacity |
+| C | db.t4g.micro US$ 0.016/h (≈ US$ 11.68/month); db.t4g.small US$ 0.032/h (≈ US$ 23.36/month) | gp3 US$ 0.115/GB-month | ≈ US$ 13.98 (micro) / US$ 25.66 (small) |
+| D | US$ 0.12 per ACU-hour while active; no compute charge while paused | Aurora storage (price not queried) | Depends on active hours |
+
+An RDS instance can be stopped when the platform is off (it restarts automatically after seven
+days). Encryption at rest with the AWS managed key has no extra charge.
+
+### Equivalents in the other clouds
+
+| Option | Azure | GCP |
+|---|---|---|
+| A, B | Same (in-cluster) | Same (in-cluster) |
+| C | Azure Database for PostgreSQL – Flexible Server | Cloud SQL for PostgreSQL |
+| D | No direct scale-to-zero equivalent verified | No direct scale-to-zero equivalent verified |
+
+All options use the standard PostgreSQL protocol; components only see a host, a port and a
+database.
+
+### Trade-offs
+
+| | A. Bundled per chart | B. Shared in-cluster | C. RDS | D. Aurora Serverless v2 |
+|---|---|---|---|---|
+| "State always on and managed" (II) | ❌ self-managed | ❌ self-managed (operator) | ✅ | ✅ |
+| Backups and upgrades | You | Operator + you | AWS | AWS |
+| Extra components in the cluster | One database per chart | Operator + database | None | None |
+| Persistent volumes in the cluster | Yes (block storage driver needed) | Yes | No | No |
+| Idle cost | Node capacity | Node capacity | Instance hour (can be stopped) | Storage only while paused |
+| Portability | ✅ | ✅ | ✅ managed equivalents | ⚠️ scale to zero is AWS-specific |
+| Simplicity | ⚠️ many databases | ⚠️ operator to learn | ✅ | ⚠️ resume delay; fewer equivalents |
+
+### Recommendation
+
+**C. One shared Amazon RDS for PostgreSQL instance (db.t4g.micro to start)**, one database per
+component: meets "state always on and managed" (II), no persistent volumes or database
+operations in the cluster, low fixed cost, and managed PostgreSQL exists in the three clouds.
+Resize if measurements show the need.
+
+### In the reference project (`20261005_eks_ws`)
+
+One PostgreSQL per component, self-managed in the cluster: a `postgres:15-alpine` Deployment with
+a 10 GiB gp3 persistent volume each (`charts/postgres-eks/`: Airbyte, Airflow, Hive Metastore,
+OpenMetadata, OpenMetadata's Airflow, and the sample source). The volumes use the EBS CSI
+driver, installed as an EKS managed add-on with its own IAM role
+(`specs/SPEC-014-terraform-eks.md`, `infra/terraform/modules/iam-irsa`). The Hive Metastore database
+also holds `iceberg_catalog`, the Trino JDBC catalog. Closest to option A (one database per
+component, in-cluster), but with the project's own manifests instead of the charts' bundled
+databases.
+
+### Decision
+
+- **Decision**: A. Bundled database of each Helm chart.
+- **Rationale**: not stated by the user. The user does not read constitution II ("State MUST be
+  always on and managed") as covering the databases of the tools, so the "self-managed" mark
+  against A in the trade-offs does not apply under that reading.
+- **Open points**: Polaris has no bundled database (a PostgreSQL must still be provided for it);
+  in-cluster databases need persistent volumes, so the cluster needs a block storage driver
+  (e.g., EBS CSI).
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- AWS Price List API (`AmazonRDS`, `AmazonEC2` gp3, `us-east-2`), queried through the AWS MCP Server.
+- [Aurora Serverless v2 auto-pause](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2-auto-pause.html)
+- [Scaling to 0 with Aurora Serverless v2](https://aws.amazon.com/blogs/database/introducing-scaling-to-0-capacity-with-amazon-aurora-serverless-v2/)
+- [Airbyte external database](https://docs.airbyte.com/platform/1.8/deploying-airbyte/integrations/database)
+- [Polaris persistence (Helm chart)](https://polaris.apache.org/releases/1.4.0/helm-chart/persistence/)
+
+---
+
+## D-011 Secrets outside Git
+
+**Status**: Decided
+
+### Context
+
+- Constitution IV: no secrets in Git; VI: in-cluster workloads delivered by Argo CD.
+- Secrets in P1: database passwords (D-010), Polaris client credentials used by Airbyte, and the
+  credentials of each data source.
+- Airbyte stores connector credentials in its database by default; it can also use AWS Secrets
+  Manager as its secrets store.
+
+### Options
+
+**A. Terraform bootstrap creates the Kubernetes Secrets** — passwords generated by Terraform
+(e.g., random passwords) and written both to the database and to Kubernetes Secrets; values are
+kept in the Terraform state (encrypted S3 bucket, D-005), never in Git. Source credentials are
+entered in the Airbyte UI and stored by Airbyte.
+**B. External Secrets Operator + a cloud secret store** — secrets live in AWS SSM Parameter
+Store or Secrets Manager; the operator (delivered by Argo CD) copies them into Kubernetes
+Secrets.
+**C. Sealed Secrets** — secrets are encrypted with a key held by a controller in the cluster;
+the encrypted form is committed to Git.
+**D. SOPS** — secrets encrypted with a key (e.g., KMS or age) and committed to Git; Argo CD needs
+a plugin to decrypt them.
+
+### Cost
+
+| Option | Cost |
+|---|---|
+| A | None |
+| B | SSM Parameter Store standard: no charge; Secrets Manager: US$ 0.40 per secret per month + US$ 0.05 per 10,000 requests |
+| C | None (controller runs in the cluster) |
+| D | KMS key (if used) |
+
+### Equivalents in the other clouds
+
+| Option | Azure / GCP |
+|---|---|
+| A | Same (Terraform Kubernetes provider) |
+| B | The operator supports Azure Key Vault and GCP Secret Manager |
+| C | Same (cloud-independent) |
+| D | Azure Key Vault / GCP KMS keys, or age |
+
+### Trade-offs
+
+| | A. Terraform bootstrap | B. External Secrets | C. Sealed Secrets | D. SOPS |
+|---|---|---|---|---|
+| Extra components | None | Operator + secret store | Controller | Argo CD plugin |
+| Where secrets live | Terraform state (encrypted) | Cloud secret store | Git (encrypted) | Git (encrypted) |
+| Rotation | Terraform apply | In the store; synced automatically | Re-seal and commit | Re-encrypt and commit |
+| Delivered by Argo CD | No (bootstrap) | Yes | Yes | Yes (with plugin) |
+| Simplicity | ✅ | ⚠️ | ⚠️ | ❌ |
+| Risk | Anyone with state access reads secrets | Store permissions (node role, D-004) | Losing the controller key loses the secrets | Key management |
+
+### Recommendation
+
+**A. Terraform bootstrap creates the Kubernetes Secrets**: no extra component or cost, nothing
+in Git, and the state is already encrypted and private (D-005). Source credentials stay in
+Airbyte. Revisit B if secrets need rotation or sharing outside the cluster.
+
+### In the reference project (`20261005_eks_ws`)
+
+Secrets are committed to Git in plain text: database passwords in versioned manifests (e.g.,
+`airbyte123` in `charts/postgres-eks/airbyte-postgres.yaml`) and object storage keys in a
+Kustomize `secretGenerator` (`charts/airbyte-eks/kustomization.yaml`); files named `*secret*.yaml`
+are ignored by Git. None of the options above; this pattern violates constitution IV.
+
+### Decision
+
+- **Decision**: Passwords defined by the user in the local `.env` file (not versioned), passed
+  to Terraform as `TF_VAR_*` variables marked `sensitive`; the Terraform bootstrap creates the
+  Kubernetes Secrets from them. Source credentials stay in Airbyte.
+- **Rationale**: the user keeps control of the values. The values are also stored in the
+  Terraform state (encrypted, private bucket, D-005). Keeping them out of the state (ephemeral
+  variables and write-only arguments, Terraform 1.10/1.11+) was presented and not chosen.
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- AWS Price List API (`AWSSecretsManager`, `us-east-2`), queried through the AWS MCP Server.
+- [Airbyte secret management](https://docs.airbyte.com/platform/deploying-airbyte/integrations/secrets)
+- [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
+
+---
+
+## D-012 Writing the bronze layer as Iceberg
+
+**Status**: Decided
+
+### Context
+
+- User decisions: Iceberg tables only; Apache Polaris as the Iceberg catalog; Airbyte for
+  ingestion.
+- Spec P1 (ingestion) comes before P2 (processing); the plan adds each component with the first
+  functionality that needs it.
+
+### Options
+
+**A. Polaris in P1; Airbyte writes Iceberg directly** — Airbyte's S3 Data Lake destination writes
+Iceberg tables to S3 and registers them in Polaris.
+**B. Airbyte writes plain files (e.g., Parquet) in P1; conversion to Iceberg in P2** — Polaris
+arrives with processing.
+**C. AWS Glue as the bronze catalog** — Airbyte writes Iceberg registered in Glue.
+
+### Trade-offs
+
+| | A. Polaris in P1 | B. Files, convert later | C. Glue |
+|---|---|---|---|
+| "Iceberg tables only" | ✅ | ❌ bronze is not Iceberg | ✅ |
+| Polaris decision | ✅ | ✅ (later) | ❌ second catalog |
+| Portability (VIII) | ✅ | ✅ | ❌ AWS-only catalog |
+| P1 scope | Larger: Polaris + its database | Smaller | Medium |
+| Extra processing step | None | Conversion job | None |
+
+### Recommendation
+
+**A. Polaris in P1**: the only option that keeps Iceberg everywhere with the chosen catalog;
+P1 then includes Airbyte, Polaris, the PostgreSQL databases (D-010) and the S3 storage.
+
+### In the reference project (`20261005_eks_ws`)
+
+Airbyte's S3 destination writes **Parquet files** (not Iceberg) to the `bronze` bucket of an
+in-cluster MinIO, not S3 (`s3://bronze/movielens/<table>/`; `docs/runbooks/airbyte-eks-setup.md`);
+Airbyte's own state and logs also go to MinIO (`apps/eks/airbyte-app.yaml`). Iceberg appears only
+in later layers, through Trino's JDBC catalog stored in PostgreSQL; Polaris is not used and a Hive
+Metastore is deployed. Closest to option B (files in bronze, Iceberg later), with a different
+catalog.
+
+### Decision
+
+- **Decision**: A. Polaris in P1; Airbyte writes Iceberg directly through the S3 Data Lake
+  destination.
+- **Rationale**: not stated by the user; matches the research recommendation (the only option
+  that keeps Iceberg tables only with the chosen catalog).
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- [Airbyte S3 Data Lake destination](https://docs.airbyte.com/integrations/destinations/s3-data-lake)
+- [Polaris persistence (Helm chart)](https://polaris.apache.org/releases/1.4.0/helm-chart/persistence/)
+
+---
+
+## D-013 Location of the internal sources
+
+**Status**: Decided
+
+### Context
+
+- Spec FR-007: sources are external and internal (APIs, databases and files). External sources
+  are reached through the outbound gateway (D-002).
+- How the platform reaches an **internal** source depends on where it is; the security
+  requirement is defined first, and the connection follows from it.
+
+### In the reference project (`20261005_eks_ws`)
+
+The only source is a sample PostgreSQL database (MovieLens) running **inside the cluster**:
+- Defined as plain YAML (`charts/postgres-eks/sample-source-postgres.yaml`), loaded by SQL scripts
+  in `charts/postgres-eks/sample-data/` (`01-movielens-schema.sql`, `02-movielens-data.sql`).
+- Airbyte reaches it by the cluster DNS name
+  `sample-source-postgres.ingestion.svc.cluster.local:5432`, with SSL disabled
+  (`docs/runbooks/airbyte-eks-setup.md`); Trino also reads it through a PostgreSQL connector
+  (`apps/eks/trino-app.yaml`).
+- There are no external sources and no sources in other networks; no VPN, peering or other
+  private connection exists (`specs/SPEC-014-terraform-eks.md` sets the EKS endpoint public "for
+  kubectl access without VPN").
+
+In the reference project the "internal source" is therefore a database in the same cluster and
+VPC, created only to simulate a company system.
+
+### Question
+
+Where are the internal sources?
+
+| Answer | What the infrastructure needs |
+|---|---|
+| In this AWS account and VPC | Nothing extra (security groups) |
+| In another AWS account or VPC | A private connection between networks (e.g., peering or Transit Gateway) |
+| In the company's own network (on-premises) | A private connection to that network (e.g., site-to-site VPN or Direct Connect) |
+| Reachable over the internet | Nothing extra; same path as external sources |
+| Not known yet | Treat as external for now; revisit later |
+
+### Decision
+
+- **Decision**: Same as the reference project: the internal source is a sample PostgreSQL
+  database (MovieLens) running inside the cluster, defined as plain YAML and loaded by SQL
+  scripts; Airbyte reaches it by its cluster DNS name. No private connection to other networks.
+- **Rationale**: chosen by the user to follow the reference project. Its password follows D-011
+  (`.env`), not the plain-text password committed in the reference project (constitution IV).
+- **Chosen by**: the user, 2026-10-09.
+
+---
+
+## D-014 PostgreSQL for Polaris
+
+**Status**: Decided
+
+### Context
+
+- D-010: each component uses the database bundled in its Helm chart; the Polaris chart has no
+  bundled database (its default persistence is in memory, lost on restart).
+- D-012: Polaris is part of P1.
+- Polaris production setup: `persistence.type: relational-jdbc` with PostgreSQL; a Kubernetes
+  Secret with `username`, `password` and `jdbcUrl`; the schema must exist beforehand and the
+  realm is created by the Polaris admin tool (bootstrap job).
+- Constitution III (simplicity), XIII (upstream charts; own resources as plain YAML), D-011
+  (password from `.env`).
+
+### Options
+
+**A. Own PostgreSQL as plain YAML** — a PostgreSQL Deployment (official `postgres` image) with a
+persistent volume, in `infra/platform/apps/polaris/`, delivered by Argo CD with the Polaris
+Application.
+**B. Reuse another chart's bundled database** — e.g., create a `polaris` database inside the
+PostgreSQL bundled with the Airbyte chart.
+**C. A PostgreSQL Helm chart** — a third-party chart deployed only for Polaris (chart and image
+licensing to be verified in the plan).
+**D. A PostgreSQL operator (e.g., CloudNativePG)** — the operator plus one PostgreSQL cluster for
+Polaris.
+
+### Cost
+
+All options run in the cluster: node capacity plus a gp3 volume (US$ 0.08/GB-month; e.g.,
+10 GB ≈ US$ 0.80/month). D also runs the operator.
+
+### Equivalents in the other clouds
+
+All options are in-cluster and work the same on AKS and GKE; only the StorageClass changes
+(D-015).
+
+### Trade-offs
+
+| | A. Own YAML | B. Reuse Airbyte's database | C. PostgreSQL chart | D. Operator |
+|---|---|---|---|---|
+| Extra components | One Deployment + volume | None | One chart | Operator + cluster |
+| Independence of the increments | ✅ Polaris owns its database | ❌ Polaris depends on Airbyte's chart | ✅ | ✅ |
+| Fits XIII | ✅ own resources as plain YAML | ✅ | ⚠️ chart not maintained by the PostgreSQL project | ⚠️ |
+| Backups and upgrades | You | You, tied to Airbyte's upgrades | You | Operator + you |
+| Simplicity | ✅ | ⚠️ hidden coupling | ⚠️ | ❌ |
+
+### In the reference project (`20261005_eks_ws`)
+
+There is no Polaris. The Iceberg catalog is Trino's JDBC catalog, stored in an `iceberg_catalog`
+database created inside the Hive Metastore PostgreSQL, which is a plain-YAML Deployment
+(`charts/postgres-eks/hive-metastore-postgres.yaml`); an Argo CD PostSync Job creates the
+database and tables (`charts/postgres-eks/iceberg-catalog-init-job.yaml`). Closest to option A
+(own YAML), with a shared database.
+
+### Recommendation
+
+**A. Own PostgreSQL as plain YAML**, owned by Polaris: simplest, keeps P1 increments
+independent, follows XIII and the reference project; the password comes from `.env` (D-011);
+a bootstrap Job creates the schema and the Polaris realm.
+
+### Decision
+
+- **Decision**: A. Own PostgreSQL as plain YAML, owned by Polaris; password from `.env` (D-011);
+  a bootstrap Job creates the schema and the Polaris realm.
+- **Rationale**: the user followed the research recommendation (simplest, keeps P1 increments
+  independent, follows XIII and the reference project).
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- [Polaris persistence (Helm chart)](https://polaris.apache.org/releases/1.4.0/helm-chart/persistence/)
+- [Polaris production configuration](https://polaris.apache.org/releases/1.5.0/helm-chart/production/)
+
+---
+
+## D-015 Block storage driver for persistent volumes
+
+**Status**: Decided
+
+### Context
+
+- D-010 and D-014: PostgreSQL databases run in the cluster and need persistent volumes (EBS).
+- On EKS, persistent volumes on EBS need the EBS CSI driver and a StorageClass (e.g., gp3).
+- D-004: AWS permissions come from the node role; the driver needs EBS permissions there.
+- Constitution V (cloud resources through Terraform), VI (in-cluster workloads through Argo CD),
+  X (pinned versions), XIII (upstream Helm charts).
+
+### Options
+
+**A. EKS managed add-on (`aws-ebs-csi-driver`), declared in Terraform** — AWS packages and
+updates the driver; the version is pinned in Terraform.
+**B. Upstream Helm chart, delivered by Argo CD** — the driver's open source chart, like the
+other in-cluster components.
+
+Both need the EBS permissions on the node role (D-004) and a gp3 StorageClass (plain YAML).
+
+### Cost
+
+No charge for the driver in either option; volumes cost US$ 0.08/GB-month (gp3).
+
+### Equivalents in the other clouds
+
+| Cloud | Block storage driver |
+|---|---|
+| AWS | EBS CSI driver (add-on or chart) |
+| Azure | Azure Disk CSI driver, built into AKS |
+| GCP | Persistent Disk CSI driver, built into GKE |
+
+AKS and GKE ship the driver as part of the managed cluster, closer to option A.
+
+### Trade-offs
+
+| | A. EKS managed add-on | B. Helm chart via Argo CD |
+|---|---|---|
+| Who packages and tests it | AWS, for the EKS version | The driver project |
+| Where it is declared | Terraform (cluster, step 0.2) | Git, Argo CD Application |
+| Available before Argo CD | ✅ (with the cluster) | ❌ (after step 0.3) |
+| Fits VI (in-cluster via Argo CD) | ⚠️ installed by AWS through Terraform, like the other core add-ons | ✅ |
+| Portability | ✅ same model as AKS/GKE built-in drivers | ⚠️ AWS-specific chart |
+| Simplicity | ✅ | ⚠️ one more Application |
+
+### In the reference project (`20261005_eks_ws`)
+
+Option A: `aws-ebs-csi-driver` is an EKS managed add-on, with its own IAM role
+(`specs/SPEC-014-terraform-eks.md`, `infra/terraform/modules/iam-irsa`), and the volumes use a
+`gp3` StorageClass.
+
+### Recommendation
+
+**A. EKS managed add-on in Terraform**, together with the other core add-ons of the cluster (VPC
+CNI, CoreDNS, kube-proxy): available as soon as the cluster exists, same model as AKS and GKE,
+and follows the reference project. Its relation to principle VI (core add-ons installed by
+Terraform rather than Argo CD) should be stated in the plan's Constitution Check.
+
+### Decision
+
+- **Decision**: A. EKS managed add-on (`aws-ebs-csi-driver`) declared in Terraform, with the
+  other core add-ons; a gp3 StorageClass as plain YAML.
+- **Rationale**: the user followed the research recommendation (available with the cluster, same
+  model as AKS and GKE, follows the reference project). Its relation to principle VI is stated
+  in the plan's Constitution Check.
+- **Chosen by**: the user, 2026-10-09.
+
+### Sources
+
+- AWS Price List API (`AmazonEC2` gp3, `us-east-2`), queried through the AWS MCP Server.
+- Facts on the EBS CSI add-on permissions and the default StorageClass to be verified in the plan
+  (constitution XII).
 
 ---
 
