@@ -2,9 +2,11 @@ Create the project constitution. This run covers the **Infrastructure** scope on
 Structure the document so a **Data** scope section can be added later by a separate amendment
 without rewriting the infrastructure principles.
 
-Context: monorepo for a low-cost data platform on Amazon EKS for a small company with
-little data per day. Infrastructure covers AWS resources (VPC, EKS, IAM, S3) provisioned
-with Terraform and the components running inside the cluster, delivered by Argo CD.
+Context: monorepo for a low-cost data platform on Kubernetes for a small company with
+little data per day, hosted on one of the three main clouds: AWS, Azure or GCP.
+Infrastructure covers cloud resources (network, Kubernetes cluster, identity and access,
+object storage) provisioned with Terraform and the components running inside the cluster,
+delivered by Argo CD.
 
 Write each principle as a testable rule (MUST / SHOULD) followed by a one-line rationale,
 so `/speckit-plan` can check it as a gate.
@@ -13,23 +15,25 @@ so `/speckit-plan` can check it as a gate.
 
 1. **Single environment.** There is only one environment, `dev`. No per-environment
    abstractions.
-2. **Scale to zero.** State is always on and managed; compute scales to zero when idle.
+2. **Scalability with cost tending to zero.** State is always on and managed; capacity
+   scales with demand and cost tends to zero when idle.
 3. **Simplicity first.** Simplest solution for the current need; nothing for hypothetical
    needs.
 4. **No secrets in Git.** Passwords, keys and tokens never go into the repository.
 
 ## Infrastructure principles
 
-5. **Infrastructure as code.** Every AWS resource is created and changed through Terraform;
+5. **Infrastructure as code.** Every cloud resource is created and changed through Terraform;
    no manual changes in the console.
 6. **GitOps for the cluster.** Every in-cluster workload is delivered by Argo CD from this
    repository; no manual `kubectl apply` or `helm install` for workloads.
-7. **Separate applies.** AWS resources (`infra/terraform/foundation`) and the cluster
+7. **Separate applies.** Cloud resources (`infra/terraform/foundation`) and the cluster
    bootstrap (`infra/terraform/bootstrap`, which installs Argo CD) are separate Terraform
    root modules with separate state and applies.
-8. **Cloud portability.** Prefer Kubernetes-native, cloud-neutral components; cloud-specific
-   code is confined to Terraform modules and resource annotations.
-9. **Least privilege.** IAM permissions are scoped per workload (no shared node-role
+8. **Cloud portability.** The solution MUST be interchangeable across at least AWS, Azure
+   and GCP, with minimal cloud provider lock-in. Prefer Kubernetes-native, cloud-neutral
+   components; cloud-specific code is confined to Terraform modules and resource annotations.
+9. **Least privilege.** Cloud permissions are scoped per workload (no shared node-role
    permissions for application access).
 10. **Pinned versions.** Terraform, providers, modules, Helm charts and images use pinned
     versions.
