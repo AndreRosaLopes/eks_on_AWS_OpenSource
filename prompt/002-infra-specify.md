@@ -24,8 +24,7 @@ P2 Processing: computing power to process the data, using the medallion architec
 schema as reference.
 
 P3 Orchestration: run the workloads on a schedule, on demand and by tumbling windows. Data is
-updated daily, with no streaming. Window granularity: [NEEDS CLARIFICATION: tumbling window
-granularity, to be defined by the user].
+updated daily, with no streaming.
 
 P4 BI: deliver the final product to business users. Up to 10 business users access it over the
 internet, each with an individual login (own accounts, the company login or another login are all

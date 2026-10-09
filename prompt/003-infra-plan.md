@@ -46,7 +46,3 @@ Kubernetes delivery structure:
 - One Argo CD Application per component, in `infra/platform/argocd/`.
 - Values file and own resources of each component in `infra/platform/apps/<component>/`.
 - The same structure for every component.
-
-Open items carried from the spec:
-- Tumbling window granularity (User Story 3): not defined; the design MUST NOT depend on a
-  specific value.
