@@ -23,8 +23,10 @@ so `/speckit-plan` can check it as a gate.
 
 ## Infrastructure principles
 
-5. **Infrastructure as code.** Every cloud resource is created and changed through Terraform;
-   no manual changes in the console.
+5. **Infrastructure as code.** Every cloud resource is created and changed through Terraform,
+   except resources created dynamically by in-cluster controllers in response to Kubernetes
+   objects declared in Git (e.g., load balancers, volumes, nodes); no manual changes in the
+   console.
 6. **GitOps for the cluster.** Every in-cluster workload is delivered by Argo CD from this
    repository; no manual `kubectl apply` or `helm install` for workloads.
 7. **Separate applies.** Cloud resources (`infra/terraform/foundation`) and the cluster
@@ -47,6 +49,10 @@ so `/speckit-plan` can check it as a gate.
     server (registry versions and resource schemas); official websites cover what these
     tools do not. Deployed resources are confirmed against the spec through the AWS MCP
     Server.
+13. **Simple Kubernetes delivery.** Use the upstream Helm chart of each component, with a
+    values file that overrides only what differs from the chart defaults; no custom or
+    wrapper charts unless no maintained chart exists; Kustomize only when a chart cannot be
+    configured through values; own resources as plain YAML.
 
 ## Governance
 
