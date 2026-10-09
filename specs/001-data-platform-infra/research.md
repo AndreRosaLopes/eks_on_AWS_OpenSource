@@ -32,7 +32,7 @@ Prices are on-demand list prices in USD; a month is 730 hours. AWS prices are fo
 | D-001 | Kubernetes on AWS and node scaling | Decided: C. EKS + Cluster Autoscaler |
 | D-002 | Outbound internet access for private subnets | Decided: A. One zonal NAT gateway |
 | D-003 | Number of Availability Zones | Decided: A. 2 AZs |
-| D-004 | Cloud permissions per workload | Pending |
+| D-004 | Cloud permissions per workload | Decided: C. Single node role |
 
 ---
 
@@ -371,11 +371,13 @@ to them.
 
 ## D-004 Cloud permissions per workload
 
-**Status**: Pending
+**Status**: Decided
 
 ### Context
 
-- Constitution IX: cloud permissions scoped per workload; no shared node-role permissions.
+- Constitution IX (as amended by this decision): cloud permissions through a single node role
+  shared by every workload; access by users and groups (including LGPD) is controlled at the
+  data layer.
 - Constitution VIII: interchangeable across AWS, Azure and GCP.
 - Workloads that need AWS permissions: Airbyte, Trino, Polaris and others that read or write
   S3; Karpenter (EC2); and future components.
@@ -399,9 +401,18 @@ to them.
   limit (typically four to eight relationships per policy).
 - Works on EKS (including Fargate), EKS Anywhere and self-managed clusters.
 
+**C. Single node role**
+- Every node gets the same IAM role (instance profile); every pod on any node uses it through
+  the instance metadata service.
+- No per-workload roles, no OIDC provider, no agent, no service account annotations.
+- Every workload, including Argo CD, can reach every resource the node role allows (e.g., the
+  data buckets).
+- Pods must be allowed to reach the instance metadata service (IMDSv2 hop limit of 2); to be
+  checked in the plan.
+
 ### Cost
 
-No charge in any of the three clouds, for both options.
+No charge in any of the three clouds, for all options.
 
 ### Equivalents in the other clouds
 
@@ -411,35 +422,40 @@ No charge in any of the three clouds, for both options.
 | AWS | EKS Pod Identity | AWS agent; no OIDC federation |
 | Azure | Microsoft Entra Workload ID | Service account token federated through OIDC (same model as IRSA) |
 | GCP | Workload Identity Federation for GKE | Service account token exchanged through STS (federated, same model as IRSA) |
+| AWS | Node role (option C) | Instance profile of the node |
+| Azure | Node (kubelet) managed identity | Identity of the VM scale set |
+| GCP | Node service account | Service account of the node VMs |
 
 ### Trade-offs
 
-| | A. Pod Identity | B. IRSA |
-|---|---|---|
-| Setup | Simpler: association through the EKS API | OIDC provider and trust policy per cluster |
-| Scale of roles | No trust-policy size limit | Trust-policy size limit |
-| Same model as Azure/GCP | No | Yes |
-| Interaction with D-001 | Not available on Fargate (matters if the Karpenter controller runs on Fargate) | Works on Fargate |
-| Application impact | Needs recent AWS SDKs | Supported by AWS SDKs for many years |
+| | A. Pod Identity | B. IRSA | C. Single node role |
+|---|---|---|---|
+| Setup | Simpler: association through the EKS API | OIDC provider and trust policy per cluster | Simplest: one role for all nodes |
+| Scale of roles | No trust-policy size limit | Trust-policy size limit | One role |
+| Same model as Azure/GCP | No | Yes | Yes (node identity exists in the three clouds) |
+| Who reaches the data buckets | Only workloads whose role allows it | Only workloads whose role allows it | Every workload, including Argo CD |
+| Application impact | Needs recent AWS SDKs | Supported by AWS SDKs for many years | None: default AWS SDK credential chain |
 
 ### Principle fit
 
-| Principle | A | B |
-|---|---|---|
-| III. Simplicity | ✅ | ⚠️ |
-| VIII. Portability | ❌ AWS-only model | ✅ same model in the three clouds |
-| IX. Least privilege | ✅ | ✅ |
+| Principle | A | B | C |
+|---|---|---|---|
+| III. Simplicity | ✅ | ⚠️ | ✅ simplest |
+| VIII. Portability | ❌ AWS-only model | ✅ same model in the three clouds | ✅ node identity in the three clouds |
+| IX. Least privilege (original text) | ✅ | ✅ | ❌ requires amending principle IX |
 
 ### Recommendation
 
-**B. IRSA**: the same federated model as Azure and GCP (constitution VIII), works on Fargate,
-and with a single cluster the trust-policy limits are not a constraint.
+**B. IRSA** (research recommendation before the decision): per-workload permissions under the
+original principle IX, with the same federated model as Azure and GCP.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: C. Single node role, shared by every workload.
+- **Rationale**: simplicity; workloads being able to reach the data products is accepted for now
+  and will be revisited later. Access to data by users and groups (including LGPD) is
+  controlled at the data layer. Requires amending constitution principle IX.
+- **Chosen by**: the user, 2026-10-09.
 
 ### Sources
 
