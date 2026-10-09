@@ -224,4 +224,6 @@ the source, check who can access it and whether it has sensitive data.
   is created from the repository.
 - Data modeling decisions (e.g., history of dimension changes) belong to the data scope and are out
   of scope here.
+- LGPD is applied per user and group in the data layers; access to sensitive data (FR-006) is
+  controlled there, not by the cloud permissions of the workloads.
 - Dependencies: none; this is the first feature.
