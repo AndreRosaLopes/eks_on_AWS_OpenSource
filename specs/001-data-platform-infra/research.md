@@ -1370,7 +1370,7 @@ return to.
 | ID | Decision | Functionality | Status |
 |---|---|---|---|
 | D-016 | Gateway API controller and public load balancer | P4 (public entry) | Decided: A. Envoy Gateway; D-016b adopted (to re-evaluate): B. AWS Load Balancer Controller |
-| D-017 | TLS certificates and domain | P4 | Decided: D. No TLS; amended by D-019 (self-signed TLS on the Trino listener) |
+| D-017 | TLS certificates and domain | P4 | Decided: D. No TLS, except C. self-signed TLS on Trino (adopted with D-019/D-026, to re-evaluate) |
 | D-018 | BI tool | P4 | Adopted (to re-evaluate): A. Metabase open source (mode 1) |
 | D-019 | Interface for external systems | P4 | Adopted (to re-evaluate): A. Trino directly (self-signed TLS on the Trino listener) |
 | D-020 | Airflow executor | P3 | Adopted (to re-evaluate): A. KubernetesExecutor + remote logging to S3 |
@@ -1395,9 +1395,9 @@ on Docker Hub (2026-10-10): `metabase/metabase`, `apache/superset`, `grafana/gra
 arm64 was never exercised there.
 
 **Trino authentication requires TLS.** Trino documentation: "Using TLS and a configured shared
-secret is required for password file authentication". With D-017 (no TLS), Trino cannot check
-passwords; without authentication it trusts the user name sent by the client. This affects D-019
-and D-026; the alternatives are described in D-026.
+secret is required for password file authentication". Without authentication, Trino trusts the
+user name sent by the client. D-017 therefore keeps plain HTTP for every route except Trino, which
+uses a self-signed certificate (D-019, D-026).
 
 ### How the decisions depend on each other
 
@@ -1641,23 +1641,24 @@ No TLS: interfaces are reached over plain HTTP on the load balancer addresses.
 **A. cert-manager + Let's Encrypt**, if a domain is available: free, portable and protects the
 individual logins. The domain itself is information from the user.
 
-### Consequences of option D
+### Consequences of the decision
 
 | # | Consequence | Related to |
 |---|---|---|
-| 1 | Logins of the BI users and credentials of the external systems travel in clear text | FR-012, FR-013 |
-| 2 | Trino cannot authenticate users by password (TLS required by Trino) | D-019, D-026 |
+| 1 | Logins of the BI users travel in clear text; credentials of the external systems are protected by the Trino TLS | FR-012, FR-013 |
+| 2 | Trino authenticates users by password over its self-signed TLS; external systems and in-cluster clients must trust that certificate | D-019, D-026 |
 | 3 | No domain: one NLB serves BI and API by port or by path, not by host name | D-016 |
 | 4 | The NLB DNS name changes every time the cluster is recreated; users and external systems must receive the new address | D-016 |
 | 5 | Moving to TLS later changes only the `Gateway` (cert-manager and a domain, option A, or a self-signed certificate on one listener, option C); routes and applications stay the same | — |
 
 ### Decision
 
-- **Decision**: D. No TLS
-- **Rationale**: Simplicity.
-- **Chosen by**: the user, 2026-10-09
-- **Amendment**: the Trino listener for external systems uses a self-signed certificate
-  (D-019 and D-026 adopted on 2026-10-10, to re-evaluate); every other route stays plain HTTP.
+- **Decision**: D. No TLS for every route, except Trino: C. self-signed certificate on Trino, passed
+  through by the `Gateway` to external systems (TLS required by Trino password authentication)
+- **Rationale**: Simplicity (D); the Trino exception follows D-019 and D-026, which need Trino
+  authentication.
+- **Chosen by**: the user, 2026-10-09 (D); the Trino exception, the user, 2026-10-10, by adopting
+  the recommendations of D-019 and D-026 (to re-evaluate)
 
 ### Sources
 
@@ -2409,7 +2410,7 @@ operator.
 ### Prerequisite: authentication
 
 Rules per user protect only if Trino knows who the user is. Trino password authentication requires
-TLS, and D-017 chose no TLS:
+TLS (D-017: no TLS except on Trino):
 
 | Way | How | Protects | Limits |
 |---|---|---|---|
