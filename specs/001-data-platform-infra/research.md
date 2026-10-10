@@ -1735,7 +1735,7 @@ needed, because business users in the observability Grafana would violate FR-004
 | 1 | Metabase needs the Trino driver JAR: an init container that downloads it into `/plugins` (no registry) or a custom image (needs a registry, as in the reference project) | D-021 (registry) |
 | 2 | Business user passwords travel in clear text over HTTP | D-017 |
 | 3 | Without a domain the BI tool gets its own port on the `Gateway`; serving under a path depends on the tool (to verify) | D-016 |
-| 4 | The BI tool may be scaled to zero outside business hours; the spec does not state BI hours | D-022 |
+| 4 | The BI tool runs 24/7 with fixed replicas (D-022): it covers the required window (weekdays 08:00–18:00 Brasília time, FR-012) with no scheduling | D-022 |
 | 5 | Sensitive data is hidden by Trino rules for the BI service user, not by the tool | D-026 |
 
 ### Equivalents in the other clouds
@@ -2068,7 +2068,7 @@ necessary, move to Cosmos (3. watcher or 2. kubernetes) with a manifest.
 |---|---|---|
 | Airbyte sync jobs, Airflow task pods (D-020 A), dbt pods (D-021) | Created per job | Already on demand |
 | Trino workers | Not decided | ✅ needed only during processing and queries |
-| BI tool | Always on | ⚠️ could stop outside business hours (hours not in the spec) |
+| BI tool | Always on | ⚠️ could stop outside the FR-012 window (weekdays 08:00–18:00 Brasília time); kept on by the user's choice (simplicity) |
 | OpenMetadata, its search engine | Always on | ⚠️ used by the technical team on demand |
 | Trino coordinator, Airflow control components, Airbyte control plane, Polaris, databases, Argo CD, Prometheus/Grafana, Envoy Gateway | Always on | ❌ must answer at any time |
 
@@ -2105,7 +2105,7 @@ always on, about one third of that if it runs 8 hours on working days.
 | 1 | Argo CD reverts replica changes made by KEDA or Airflow unless `replicas` is left out of the values or ignored (`ignoreDifferences`) | Constitution VI |
 | 2 | Trino with zero workers: the coordinator must also run queries (`node-scheduler.include-coordinator=true`, as in the reference project) | — |
 | 3 | Scaling Trino workers down while a query runs fails it: graceful shutdown or scale-down only after the batch | D-020 |
-| 4 | A BI tool scaled to zero is unavailable until scaled up; business hours are information from the user | D-018, FR-012 |
+| 4 | The BI tool stays on 24/7: stopping it outside the FR-012 window would save ≈ US$ 5–10/month but needs a scheduler (e.g., KEDA cron), rejected by the user for simplicity | D-018, FR-012 |
 | 5 | The largest saving in a lab is turning the whole cluster off between sessions; that is an operating procedure, not workload scaling | Plan cost estimate |
 
 ### Equivalents in the other clouds
@@ -2128,13 +2128,13 @@ components have fixed replicas.
 ### Recommendation
 
 **B. Airflow scales Trino workers** around the daily batch (no extra component) and **D. fixed
-replicas** for the rest at first; add **A. KEDA** with cron if the BI tool or OpenMetadata should
-stop outside business hours.
+replicas** for the rest, including the BI tool (24/7, which covers the FR-012 window).
 
 ### Decision
 
 - **Decision**: B. Airflow scales Trino workers around the batch; D. fixed replicas for the rest
-- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Rationale**: Recommendation of this entry adopted without individual review. On 2026-10-10 the user
+  rejected KEDA cron for the BI tool (simplicity): the BI tool stays on 24/7.
 - **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
