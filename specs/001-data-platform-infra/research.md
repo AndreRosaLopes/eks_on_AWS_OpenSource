@@ -698,6 +698,13 @@ Multi-architecture images (amd64 and arm64) were verified for: Airflow (`apache/
 Grafana, Prometheus and Argo CD (`quay.io/argoproj/argocd`, multi-architecture manifest). Each
 Airbyte connector and every image built by the project must also be checked.
 
+Checked again on 2026-10-10 (task T006, `docker manifest inspect`), all with arm64: Airbyte
+`airbyte/server`, `airbyte/worker`, `airbyte/workload-launcher` 2.4.0, connectors
+`airbyte/destination-s3-data-lake` and `airbyte/source-postgres`; `apache/polaris` and
+`apache/polaris-admin-tool`; `openmetadata/server` and `openmetadata/ingestion`;
+`ghcr.io/opencost/opencost`; `public.ecr.aws/eks/aws-load-balancer-controller` v2.17.0;
+`registry.k8s.io/autoscaling/cluster-autoscaler` v1.36.1; `postgres` 18.
+
 ### Equivalents in the other clouds
 
 | Cloud | x86 general purpose | arm64 general purpose | Burstable |

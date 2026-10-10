@@ -1,0 +1,64 @@
+# Validation of every change (D-031): Terraform and Kubernetes YAML, with no cloud credential.
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  KUBECONFORM_VERSION: v0.8.0
+  YAMLLINT_VERSION: 1.38.0
+  KUBECONFORM_URL: https://github.com/yannh/kubeconform/releases/download
+  CRDS_CATALOG: https://raw.githubusercontent.com/datreeio/CRDs-catalog/main
+
+jobs:
+  terraform:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: 1.16.4
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra/terraform
+      - name: terraform validate
+        run: |
+          for dir in state data foundation bootstrap; do
+            path="infra/terraform/$dir"
+            if ! ls "$path"/*.tf >/dev/null 2>&1; then
+              echo "skip $path (no Terraform files)"
+              continue
+            fi
+            echo "::group::$path"
+            terraform -chdir="$path" init -backend=false -input=false
+            terraform -chdir="$path" validate
+            echo "::endgroup::"
+          done
+
+  yaml:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.13"
+      - name: yamllint
+        run: |
+          pip install "yamllint==${YAMLLINT_VERSION}"
+          yamllint --strict .
+      - name: kubeconform
+        run: |
+          curl -sSL "${KUBECONFORM_URL}/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz kubeconform
+          dirs=$(ls -d infra/platform/argocd infra/platform/apps/*/manifests 2>/dev/null || true)
+          if [ -z "$dirs" ]; then
+            echo "no manifests"
+            exit 0
+          fi
+          ./kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location "${CRDS_CATALOG}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+            $dirs
