@@ -15,9 +15,9 @@ described by functionality: ingestion, processing, orchestration, BI, observabil
 
 - Q: How must the platform be turned on and off? → A: It stays on 24/7; the daily update runs
   automatically.
-- Q: If the processing environment or a tool's own database is lost, what must be recoverable? → A: The stored data
-  and the catalog of the tables (backed up daily); the state of the other tools is rebuilt by hand
-  or from the repository.
+- Q: If the processing environment or a tool's own database is lost, what must be recoverable? → A: Only the
+  stored data; the catalog of the tables and the state of the other tools are not backed up (first
+  answer "data and catalog, backed up daily" revised by the user on the same day).
 - Q: How long is raw (bronze) data kept in the repository? → A: All data is kept with no time
   limit; nothing is deleted.
 - Q: When must the BI be available to business users? → A: Weekdays (Monday to Friday), 08:00
@@ -168,8 +168,8 @@ the source, check who can access it and whether it has sensitive data.
   (FR-002).
 - A business user accesses the BI outside the availability window (FR-012): the BI may be
   unavailable; it is available again at the start of the next window.
-- The processing environment is lost: the stored data and the catalog of its tables are recovered
-  from the last daily backup (FR-018); other tool state is rebuilt.
+- The processing environment is lost: the stored data remains; the tables are recreated by
+  reloading from the sources and the other tools are rebuilt (FR-018).
 
 ## Requirements *(mandatory)*
 
@@ -205,10 +205,10 @@ the source, check who can access it and whether it has sensitive data.
   of sensitive data.
 - **FR-017**: The platform MUST support growth of the daily data volume from today's 1 GB per day
   up to 1000x (about 1 TB per day) without redesign.
-- **FR-018**: The stored data and the catalog of its tables MUST survive the loss of the processing
-  environment; the catalog MUST be backed up at least daily outside that environment. The state of
-  the other tools (dashboards, run history, metadata catalog) MAY be rebuilt by hand or from the
-  repository.
+- **FR-018**: The stored data MUST survive the loss of the processing environment. The catalog of
+  the tables and the state of the other tools (dashboards, run history, metadata catalog) are not
+  backed up; after such a loss, the tables are recreated by reloading the data from the sources and
+  the other tools are rebuilt by hand or from the repository.
 
 ### Key Entities
 

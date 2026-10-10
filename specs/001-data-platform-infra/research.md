@@ -2488,6 +2488,378 @@ Git.
 
 ---
 
+## Decisions from the clarifications and the adopted entries
+
+New open choices raised by the spec clarifications of 2026-10-10 (FR-018), by D-017/D-026 and by
+the teardown review.
+
+| ID | Decision | Functionality | Status |
+|---|---|---|---|
+| D-027 | Daily backup of the table catalog | P1 (Polaris) | Decided: no backup (FR-018 changed) |
+| D-028 | Self-signed certificate for Trino | P2 (Trino), used in P4 | Decided: A. Terraform `tls` provider |
+| D-029 | Teardown procedure | All steps | Decided: A. One shell script with every teardown action |
+| D-030 | Location of the data bucket in Terraform | Step 0, P1 | Decided: A. Separate persistent root module |
+
+---
+
+## D-027 Daily backup of the table catalog
+
+**Status**: Decided
+
+### Context
+
+- FR-018 (clarification 2026-10-10): the stored data and the catalog of its tables survive the
+  loss of the processing environment; the catalog is backed up at least daily outside it. The
+  state of the other tools may be rebuilt.
+- The catalog is Polaris, whose state is in its own PostgreSQL on an EBS volume (D-012, D-014).
+  The data and the Iceberg metadata files are already in S3.
+- Without the catalog, the Iceberg tables in S3 still exist but nothing points to them; each table
+  would have to be registered again from its latest metadata file.
+
+### Options
+
+**A. Kubernetes CronJob: `pg_dump` + upload to object storage** — an init container runs `pg_dump`
+(official `postgres` image, same major version) into a shared temporary volume; a second container
+uploads the file with `rclone` (one tool for S3, Azure Blob and Google Cloud Storage). Plain YAML.
+**B. Velero** — backup tool for Kubernetes resources and volumes (file-level copy to object storage
+or cloud snapshots); one more component; could back up every tool volume.
+**C. EBS snapshots by AWS Data Lifecycle Manager** — Terraform policy that snapshots volumes with a
+given tag every day; no in-cluster component; AWS-only.
+
+### Trade-offs
+
+| | A. CronJob `pg_dump` | B. Velero | C. EBS snapshots (DLM) |
+|---|---|---|---|
+| What is copied | The Polaris database (logical dump) | Volumes and Kubernetes objects (any tool) | The whole Polaris volume |
+| Extra component | None (a CronJob) | Velero server + plugin per cloud | None in the cluster; a DLM policy in Terraform |
+| Restore | `psql` / `pg_restore` into a new database | `velero restore` | New volume from the snapshot, bound to a new PersistentVolume |
+| Consistency | Consistent dump (PostgreSQL transaction) | File copy of a live volume (crash-consistent) | Crash-consistent snapshot |
+| Survives a destroyed cluster and volume | ✅ file in S3 | ✅ | ✅ snapshot outlives the volume |
+| Tag on the dynamically created volume | Not needed | Not needed | Needed (EBS CSI volume tags) |
+| Portability (constitution VIII) | ✅ only the `rclone` remote changes | ✅ plugin per cloud | ❌ AWS-only |
+| Simplicity (constitution III) | ✅ | ❌ | ⚠️ restore is manual and AWS-specific |
+
+### Cost
+
+| Item | Price (`us-east-2`, AWS Price List API) |
+|---|---|
+| A: dumps in S3 Standard | US$ 0.023/GB-month; a catalog dump is expected in MB (to measure), so cents per month |
+| A: job pod | A few minutes a day on existing or Spot capacity |
+| B: Velero pod always on | ≈ 0.1–0.25 GiB (to measure) ≈ US$ 1–2/month, plus storage |
+| C: EBS snapshots | US$ 0.05/GB-month of snapshot data (incremental) |
+
+Retention of the backups (e.g., the last 30 dumps, by an S3 lifecycle rule on the backup prefix)
+is separate from FR-008, which concerns the data.
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | A bucket (or prefix) for backups, created by Terraform, with a lifecycle rule for old dumps | Constitution V |
+| 2 | The node role needs write access to that bucket | D-004 |
+| 3 | The job uses the Polaris database password from `.env` | D-011 |
+| 4 | Restoring an older catalog shows the tables as of the backup time; data written after it stays in S3 and the next daily load writes again | FR-011 |
+| 5 | A restore test belongs to the acceptance checks | Constitution XI, quickstart |
+| 6 | Images `postgres` and `rclone` must be published for arm64 (to verify) | D-007 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| CronJob `pg_dump` + `rclone` (A) | S3 remote | Azure Blob remote | Google Cloud Storage remote |
+| Velero (B) | AWS plugin | Azure plugin | GCP plugin |
+| Volume snapshots (like C) | EBS snapshots + Data Lifecycle Manager | Managed disk snapshots / Azure Backup | Persistent disk snapshot schedules |
+| Managed PostgreSQL with built-in backups (alternative to the in-cluster database) | Amazon RDS | Azure Database for PostgreSQL | Cloud SQL |
+
+A moves by changing only the `rclone` remote configuration; C would be rebuilt with each cloud's
+snapshot service.
+
+### In the reference project
+
+No backup of any database.
+
+### Recommendation
+
+**A. CronJob with `pg_dump` and `rclone` to S3**, once a day after the daily load, keeping the last
+30 dumps: no extra component, consistent dump, portable, and only the catalog is copied, as FR-018
+requires.
+
+### Decision
+
+- **Decision**: No backup of the catalog. FR-018 changed accordingly: only the stored data must
+  survive; after a loss, the tables are recreated by reloading from the sources.
+- **Rationale**: Simplicity; the user accepts losing the catalog (and the other tool state).
+- **Chosen by**: the user, 2026-10-10
+
+### Sources
+
+- AWS Price List API, `AmazonS3` storage and `AmazonEC2` storage snapshots, `us-east-2` (queried
+  2026-10-10)
+- To verify in the plan: `rclone` S3 remote with instance credentials, `postgres` and `rclone`
+  arm64 images, Polaris restore procedure.
+
+---
+
+## D-028 Self-signed certificate for Trino
+
+**Status**: Decided
+
+### Context
+
+- D-017: no TLS on every route except Trino, which uses a self-signed certificate.
+- D-026: Trino password authentication (way ii), which requires TLS.
+- Clients: the BI tool, dbt and Airflow (in the cluster), the technical team (port-forward) and the
+  external systems (through the `Gateway`, D-016, D-019).
+
+### Options
+
+**A. Terraform `tls` provider** — the `bootstrap` apply generates the private key and the
+self-signed certificate and stores them as a Kubernetes Secret, like the passwords of D-011.
+**B. cert-manager with a self-signed issuer** — one more component; it creates and renews the
+certificate inside the cluster.
+**C. Generated by hand (`openssl`) and loaded manually** — no automation.
+
+### Trade-offs
+
+| | A. Terraform `tls` | B. cert-manager | C. By hand |
+|---|---|---|---|
+| Extra component | None | cert-manager (Argo CD Application) | None |
+| Renewal | Re-apply before expiry (validity set in the code, e.g., 1 year) | Automatic (Trino reload: to verify) | Manual |
+| Private key stored in | Terraform state (S3, D-005), as the D-011 passwords | Kubernetes Secret only | Wherever it was created |
+| Reproducible from the repository (constitution V, VI) | ✅ | ✅ | ❌ |
+| Portability | ✅ | ✅ | ✅ |
+| Simplicity | ✅ | ⚠️ | ⚠️ manual steps |
+
+### Cost
+
+None for A and C; B adds the cert-manager pods (small, to measure).
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | The certificate name must match what clients use: the internal service name is fixed, but the NLB DNS name changes when the cluster is recreated (D-017 consequence 4). External clients either verify only the certificate authority (Trino JDBC `SSLVerification=CA`) or use a fixed name that the certificate carries | D-019, D-017 |
+| 2 | Every client must trust the certificate: the BI tool and dbt (in-cluster configuration), the external systems (the certificate is handed to them) | D-018, D-021 |
+| 3 | The `Gateway` forwards Trino traffic without terminating TLS: a dedicated port with TCP routing or TLS passthrough (passthrough routes by SNI; behaviour without a hostname to verify) | D-016 |
+| 4 | Trino behind the `Gateway` reads forwarded headers only if `http-server.process-forwarded=true` is set; with TCP routing it is not needed | D-019 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Terraform `tls` provider (A) / cert-manager (B) | Same | Same | Same |
+| Cloud-managed private certificate authority | AWS Private CA (monthly fee per CA: to verify) | Key Vault certificates | Certificate Authority Service |
+| Portability of the managed alternative | ❌ | ❌ | ❌ |
+
+### In the reference project
+
+No TLS anywhere.
+
+### Recommendation
+
+**A. Terraform `tls` provider** in the `bootstrap` apply: no extra component, the same path as the
+other secrets (D-011), reproducible; external clients verify the certificate authority only
+(`SSLVerification=CA`) because the NLB name changes.
+
+### Decision
+
+- **Decision**: A. Terraform `tls` provider in the `bootstrap` apply; external clients verify the
+  certificate authority only (`SSLVerification=CA`)
+- **Rationale**: No extra component, same path as the other secrets (D-011), reproducible.
+- **Chosen by**: the user, 2026-10-10
+
+### Sources
+
+- [Trino JDBC driver parameters](https://trino.io/docs/current/client/jdbc.html)
+- [Envoy Gateway TLS passthrough](https://gateway.envoyproxy.io/docs/tasks/security/tls-passthrough/)
+- [Trino TLS and load balancers](https://trino.io/docs/current/security/tls.html)
+- To verify in the plan: Terraform `tls` provider version (Terraform MCP), Trino certificate
+  reload, Envoy Gateway TCP routing.
+
+---
+
+## D-029 Teardown procedure
+
+**Status**: Decided
+
+### Context
+
+- Constitution II: cost tends to zero when idle; after a teardown, only the stored data and the
+  Terraform state remain billed.
+- Constitution V allows cloud resources created by in-cluster controllers. Two of them are billed
+  and are not in the Terraform state:
+  - the NLB, its target groups and security groups, created by the AWS Load Balancer Controller
+    for the `Gateway` (D-016b);
+  - the EBS volumes, created by the EBS CSI driver for the PersistentVolumeClaims (D-015).
+- If `terraform destroy` removes the cluster first, these resources become orphans: they keep
+  billing, and the NLB and its network interfaces block the deletion of the VPC (D-016 impact 3).
+- Argo CD recreates whatever is deleted while its Applications exist (constitution VI).
+- Constitution XI: `terraform destroy` runs only with explicit approval.
+- FR-018: the stored data survives the loss of the processing environment (see D-030).
+
+### Ordered actions
+
+| # | Action | Why |
+|---|---|---|
+| 1 | Ask for explicit confirmation, showing the cluster name, account and Region | Constitution XI |
+| 2 | Stop Argo CD reconciliation: delete the root Application without cascade, so the component Applications stop being recreated | Otherwise Argo CD recreates them |
+| 3 | Delete the Application with the `Gateway` (cascade, through the `resources-finalizer.argocd.argoproj.io` finalizer set on every Application) and wait until the NLB no longer exists in AWS | The controller deletes the NLB only while it is still running |
+| 4 | Delete the other workload Applications (cascade), then the remaining PersistentVolumeClaims, and wait until their EBS volumes no longer exist | The EBS CSI driver deletes volumes only while it is still running (`reclaimPolicy: Delete`) |
+| 5 | Delete the platform Applications: AWS Load Balancer Controller, Cluster Autoscaler, storage | Nothing depends on them any more |
+| 6 | `terraform destroy` in `bootstrap` (interactive, no `-auto-approve`) | Argo CD, Secrets, Trino certificate (D-011, D-028) |
+| 7 | `terraform destroy` in `foundation` (interactive) | EKS, node groups, NAT gateway, public IPv4, VPC; the data bucket is not in this module (D-030) |
+| 8 | Check what is left in the account and Region: load balancers, target groups, volumes, network interfaces, security groups, Elastic IPs, EKS log groups; report and exit with an error if anything is found | Constitution II and XI |
+
+The script stops at the first failed step; it can be run again after a partial teardown (each step
+skips what no longer exists).
+
+### Options for how the actions are run
+
+**A. One shell script (`scripts/teardown.sh`, Git Bash)** — every action above in order, with
+waits (`kubectl wait`, AWS CLI queries in a loop) and the final check.
+**B. Makefile target calling scripts** — as in the reference project; one more tool.
+**C. Written runbook** — the commands in the documentation, run by hand.
+**D. `terraform destroy` only** — leaves the NLB and the EBS volumes as orphans.
+
+### Trade-offs
+
+| | A. Shell script | B. Makefile + scripts | C. Runbook | D. Destroy only |
+|---|---|---|---|---|
+| Orphan NLB and volumes | ✅ prevented and checked | ✅ | ⚠️ depends on the operator | ❌ |
+| Extra tool | None (Git Bash, `kubectl`, `aws`, `terraform`) | `make` (not shipped with Git Bash on Windows) | None | None |
+| Reproducible (working principle 9) | ✅ | ✅ | ⚠️ | ✅ but incomplete |
+| Simplicity (constitution III) | ✅ | ⚠️ | ✅ | ✅ |
+
+### Cost
+
+None for the script. Orphans avoided: NLB ≈ US$ 16.43/month + public IPv4 US$ 3.65/month each;
+EBS gp3 US$ 0.08/GB-month per volume.
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Load balancer created by a controller | NLB (AWS Load Balancer Controller) | Azure Load Balancer + public IP in the AKS node resource group | Network load balancer forwarding rule (GKE) |
+| Volumes created by the CSI driver | EBS volumes | Managed disks in the AKS node resource group | Persistent disks |
+| Removed with the cluster | ❌ | ✅ the node resource group is deleted with the cluster (to verify) | ❌ (to verify) |
+| Steps 1–6 and 8 of the script | Same | Same (cloud queries change) | Same (cloud queries change) |
+
+Only the queries in step 8 and the waits on cloud resources are cloud-specific.
+
+### In the reference project
+
+`scripts/teardown-argocd-apps.sh` added the cascade finalizer to every Application, deleted them
+all at once and printed the AWS CLI commands to check for orphan NLBs and volumes by hand; a
+Makefile target ran it before `terraform destroy -auto-approve`. The script was written after
+orphan NLBs and volumes were left in the account.
+
+### Recommendation
+
+**A. One shell script** with the eight actions: no extra tool, orphans prevented in order (load
+balancer and volumes before their controllers) and checked automatically.
+
+### Decision
+
+- **Decision**: A. One shell script (`scripts/teardown.sh`) with every action above
+- **Rationale**: Prevents orphan billed resources with no extra tool; destroy stays interactive.
+- **Chosen by**: the user, 2026-10-10
+
+### Sources
+
+- [AWS Load Balancer Controller: Service annotations](https://kubernetes-sigs.github.io/aws-load-balancer-controller/latest/guide/service/annotations/)
+- [Argo CD: App deletion](https://argo-cd.readthedocs.io/en/stable/user-guide/app_deletion/)
+- To verify in the implementation: tags set by the controller and the EBS CSI driver to find
+  orphans by cluster, AKS node resource group and GKE behaviour on cluster deletion.
+
+---
+
+## D-030 Location of the data bucket in Terraform
+
+**Status**: Decided
+
+### Context
+
+- The plan placed the S3 buckets in the `foundation` apply.
+- FR-018: the stored data survives the loss of the processing environment. The state of the other
+  tools is not kept (D-027).
+- The teardown (D-029) runs `terraform destroy` in `foundation`. With the data bucket in it, the
+  destroy either deletes the data (`force_destroy = true`) or fails halfway on a non-empty bucket.
+- Buckets in the plan:
+  - the data bucket (Iceberg tables, P1);
+  - the Airflow remote logging bucket (D-020);
+  - Airbyte storage (P1).
+  Only the data bucket is required by FR-018.
+
+### Options
+
+**A. Separate persistent root module (`infra/terraform/data/`)** — the data bucket in its own
+module and state key (D-005), applied once and never part of the teardown. `foundation` receives
+the bucket name as a variable, for the node role policy (D-004). The tool buckets (Airflow logs,
+Airbyte storage) stay in `foundation` with `force_destroy = true` and go away with the
+environment.
+**B. Data bucket in the existing `state/` module** — no new module; but `state/` uses local state
+on one workstation (D-005).
+**C. Keep it in `foundation` with `prevent_destroy`** — the bucket must be removed from the state
+(`terraform state rm`) before each destroy and imported again after each recreation.
+**D. Keep it in `foundation` without `force_destroy`** — the destroy fails on the non-empty bucket
+and leaves the environment half deleted.
+
+### Trade-offs
+
+| | A. Separate module | B. In `state/` | C. `prevent_destroy` | D. Unchanged |
+|---|---|---|---|---|
+| Data survives the teardown | ✅ | ✅ | ✅ with manual steps | ⚠️ destroy fails |
+| Manual steps | None | None | `state rm` and import every cycle | Fix a half-done destroy |
+| State shared and locked | ✅ | ❌ local | ✅ | ✅ |
+| Root modules | One more (constitution VII still met) | Same | Same | Same |
+| Simplicity (constitution III) | ✅ | ⚠️ | ❌ | ❌ |
+
+### Cost
+
+None of the options changes the bill. After a teardown, the remaining costs are the data bucket
+(S3 Standard US$ 0.023/GB-month) and the state bucket (cents).
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Order of the first apply: `state/` → `data/` → `foundation` → `bootstrap` | D-005, constitution VII |
+| 2 | The node role policy in `foundation` references the data bucket by name (variable) | D-004 |
+| 3 | The teardown never touches `data/` or `state/` | D-029 |
+| 4 | Airflow logs and Airbyte storage are deleted with the environment, as the other tool state | D-020, D-027 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Data storage in its own module | S3 bucket | Storage account + container | Cloud Storage bucket |
+| Protection against deletion | `prevent_destroy`, bucket without `force_destroy` | `prevent_destroy`, resource lock | `prevent_destroy`, bucket without `force_destroy` |
+
+The module separation is the same in the three clouds.
+
+### In the reference project
+
+The buckets were MinIO inside the cluster; the data was lost with each teardown.
+
+### Recommendation
+
+**A. Separate persistent root module** for the data bucket only: data survives every teardown with
+no manual step, and the tool buckets follow the rule of D-027.
+
+### Decision
+
+- **Decision**: A. Separate persistent root module (`infra/terraform/data/`) with the data bucket;
+  Airflow logs and Airbyte storage stay in `foundation` and are deleted with it
+- **Rationale**: Needed by the teardown (D-029) to keep the data required by FR-018.
+- **Chosen by**: the user, 2026-10-10, by asking for every teardown action
+
+### Sources
+
+- [Terraform `prevent_destroy`](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle)
+- [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
+
+---
+
 ## N-001 Memory and cost reduction for Argo CD and Airflow
 
 **Status**: Noted by the user as important for cost; to apply in the plan and implementation.
