@@ -1355,6 +1355,1128 @@ Terraform rather than Argo CD) should be stated in the plan's Constitution Check
 
 ---
 
+## P2–P6 decisions
+
+These entries cover the `NEEDS CLARIFICATION` items of `plan.md`. Each one lists the options,
+trade-offs, cost, impacts on other steps and decisions, the equivalents in the other clouds, what
+the reference project does and a recommendation; the user decides. Facts marked "to verify" must
+be confirmed in the plan (constitution XII).
+
+| ID | Decision | Functionality | Status |
+|---|---|---|---|
+| D-016 | Gateway API controller and public load balancer | P4 (public entry) | Decided: A. Envoy Gateway; D-016b (who creates the NLB) Pending |
+| D-017 | TLS certificates and domain | P4 | Decided: D. No TLS |
+| D-018 | BI tool | P4 | Pending |
+| D-019 | Interface for external systems | P4 | Pending |
+| D-020 | Airflow executor | P3 | Pending |
+| D-021 | Delivery of DAGs and the dbt project; dbt execution | P2/P3 | Pending |
+| D-022 | Scaling workloads with demand (cost tending to zero) | P2–P4 | Pending |
+| D-023 | Cost visibility | P5 | Pending |
+| D-024 | Alert channel | P5 | Pending |
+| D-025 | OpenMetadata search engine | P6 | Pending |
+| D-026 | Enforcement of data access control and sensitive data | P4/P6 | Pending |
+
+### Common basis for the entries below
+
+**Memory is the cost.** In-cluster components cost the node capacity they reserve. With
+m7g.large (2 vCPU, 8 GiB, US$ 0.0816/h On-Demand, D-007), 1 GiB reserved all the time costs
+≈ US$ 0.0102/h, ≈ US$ 7.4/month. Always-on components live in the On-Demand base group; jobs that
+start and stop can run on the Spot group (D-001).
+
+**arm64 images.** Nodes are Graviton (D-007), so every image must be published for arm64. Checked
+on Docker Hub (2026-10-10): `metabase/metabase`, `apache/superset`, `grafana/grafana`,
+`trinodb/trino`, `apache/airflow`, `opensearchproject/opensearch`, `envoyproxy/gateway` and
+`openpolicyagent/opa` publish arm64 images. The reference project ran on x86 (`t3.large`), so
+arm64 was never exercised there.
+
+**Trino authentication requires TLS.** Trino documentation: "Using TLS and a configured shared
+secret is required for password file authentication". With D-017 (no TLS), Trino cannot check
+passwords; without authentication it trusts the user name sent by the client. This affects D-019
+and D-026; the alternatives are described in D-026.
+
+### How the decisions depend on each other
+
+| Decision | Depends on | Affects |
+|---|---|---|
+| D-026 Access control | D-017 (authentication needs TLS), D-004 | D-018, D-019 |
+| D-018 BI tool | D-026 | D-016 (route), D-021 (image registry, if an image is built) |
+| D-019 External systems | D-017, D-026 | D-016 (listener), D-004 (option C), data transfer cost |
+| D-016b NLB provisioning | D-018, D-019 | D-004 |
+| D-020 Airflow executor | — | D-021, D-022, Airflow task logs |
+| D-021 DAGs and dbt | D-020, D-008 | Image registry and build (CI) |
+| D-022 Workload scaling | D-020 | Argo CD configuration (replicas) |
+| D-023 Cost visibility | Prometheus (P5) | Tags on Terraform and controller-created resources |
+| D-024 Alert channel | Information from the user | — |
+| D-025 OpenMetadata search | OpenMetadata version | Node configuration (`vm.max_map_count`) |
+
+Suggested order: D-026 → D-018 → D-019 → D-016b; D-020 → D-021 → D-022; D-023 and D-024; D-025.
+
+### What the reference project (`20261005_eks_ws`) does, in summary
+
+| Topic | Reference project |
+|---|---|
+| Public exposure | One AWS load balancer per interface (`type: LoadBalancer` for Airbyte, Airflow, Metabase, API); no Gateway API, no TLS, no cert-manager |
+| BI | Metabase from plain YAML (`charts/metabase-eks/`), own PostgreSQL, custom image in ECR |
+| External systems | Own API (`code/api-service`: FastAPI + DuckDB) with a single API key in the `X-API-Key` header (default `changeme`) |
+| Airflow | KubernetesExecutor (`workers.replicas: 0`); DAGs baked into a custom image in ECR (`data-platform/airflow-dags`); dbt run through Cosmos |
+| Scaling of workloads | None (no KEDA); Trino with zero workers, the coordinator also runs queries |
+| Cost visibility | None |
+| Alerts | Alertmanager enabled in the observability values; no receiver configured |
+| OpenMetadata search | OpenSearch Helm chart 2.21.0 |
+| Data access control | None; catalog passwords in plain text in the Trino configuration |
+
+---
+
+## D-016 Gateway API controller and public load balancer
+
+**Status**: Decided (controller: A. Envoy Gateway); load balancer provisioning (D-016b) Pending
+
+### Context
+
+- User decision (plan input): public access for BI and external systems through an in-cluster
+  Gateway API controller exposed by **one** L4 load balancer; admin interfaces (Airflow, Grafana,
+  OpenMetadata, Argo CD) through `kubectl port-forward`.
+- Consequence: **no load balancer exists from step 0 to P3**; it is created in P4, the first
+  functionality with public users (BI, FR-012) and external systems.
+- Constitution II (an idle load balancer has a fixed cost), III, V (exception: resources created
+  by in-cluster controllers), VIII (only the load balancer annotations are cloud-specific), XIII.
+
+### What is created in P4
+
+The Gateway API is the Kubernetes standard API for inbound traffic (successor of Ingress). It is
+**not** present in a new EKS cluster: its resource types (CRDs) and a controller must be
+installed.
+
+| Item | What it is | Created by |
+|---|---|---|
+| Gateway API CRDs | Resource types `GatewayClass`, `Gateway`, `HTTPRoute`, … | Controller's Helm chart, through Argo CD |
+| Controller | Pods that receive the traffic and apply the routes | Argo CD (upstream Helm chart) |
+| One `Gateway` | The single public entry point; the controller creates a Service `type: LoadBalancer` for it | Argo CD (plain YAML) |
+| AWS Network Load Balancer (NLB) | L4 load balancer in the public subnets, created from that Service | An AWS controller (D-016b), **not Terraform** |
+| One `HTTPRoute` per exposed application | e.g., BI host → BI tool, API host → external systems interface | Argo CD (plain YAML), with each functionality |
+
+### Options (controller)
+
+**A. Envoy Gateway** — Envoy project's Gateway API implementation.
+**B. Traefik** — reverse proxy with Gateway API support.
+**C. NGINX Gateway Fabric** — NGINX's Gateway API implementation.
+**D. Istio (Gateway API mode)** — service mesh with Gateway API support.
+
+| | A. Envoy Gateway | B. Traefik | C. NGINX Gateway Fabric | D. Istio |
+|---|---|---|---|---|
+| Focus | Gateway API only | General proxy | Gateway API only | Service mesh |
+| Footprint | Small | Small | Small | Larger |
+| Simplicity | ✅ | ✅ | ✅ | ❌ |
+| Portability | ✅ | ✅ | ✅ | ✅ |
+
+Conformance level, current versions and memory footprint: to verify at implementation
+(constitution X, XII).
+
+### D-016b Who creates the NLB on AWS
+
+The Service created for the `Gateway` is turned into an AWS load balancer by one of two
+controllers:
+
+**A. Legacy service controller (AWS cloud provider)** — built into the EKS control plane; creates
+a Classic Load Balancer by default, or an NLB with the annotation
+`service.beta.kubernetes.io/aws-load-balancer-type: nlb`. No extra component.
+**B. AWS Load Balancer Controller** — installed in the cluster (Helm chart through Argo CD); since
+v2.5 it creates an NLB for every `type: LoadBalancer` Service.
+
+| | A. Legacy service controller | B. AWS Load Balancer Controller |
+|---|---|---|
+| Extra component in the cluster | None | One Deployment (Helm chart) |
+| AWS status | Legacy, only critical bug fixes | Recommended by AWS |
+| Cloud permissions | None from the nodes (control plane) | ELB/EC2 permissions; with the single node role (D-004) every pod gets them |
+| Features | NLB with basic annotations; no IPv6 | Full NLB options (target type, health checks, security groups) |
+| Cloud-specific code | Service annotations | Service annotations + one Helm chart |
+| Moving to Azure/GCP | Remove the annotations | Remove the annotations and the chart |
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Public subnets must carry the tag `kubernetes.io/role/elb = 1` so the controller finds them | Step 0.1 (Terraform network) |
+| 2 | With D-016b B, the node role gets the AWS Load Balancer Controller IAM policy | D-004 |
+| 3 | The NLB is created outside Terraform: the `Gateway` (its Service) must be deleted before `terraform destroy`, or the orphan NLB blocks the VPC deletion | Constitution V, XI; teardown procedure |
+| 4 | Routing by host name (one NLB for BI and API) needs a domain and DNS records; without a domain, only the NLB DNS name with path routing | D-017 |
+| 5 | TLS terminates at the `Gateway` (cert-manager) or at the NLB (AWS Certificate Manager, AWS-only) | D-017, constitution VIII |
+| 6 | What goes through the `Gateway`: the BI tool and the external systems interface | D-018, D-019 |
+| 7 | The NLB is public; restriction by source IP or authentication is done at the `Gateway` or in the application | D-026, spec FR-006 |
+| 8 | The NLB has a fixed hourly cost while it exists, even with no traffic | Constitution II; cost per step |
+
+Natural decision order: D-018 and D-019 (what is exposed) → D-017 (domain and TLS) → D-016b
+(who creates the NLB).
+
+### Cost
+
+The controller runs on the existing nodes. The load balancer (`us-east-2`, AWS Price List API):
+
+| Item | Price | Per hour | 6-hour session | Month (730 h) |
+|---|---|---|---|---|
+| NLB | US$ 0.0225/h | US$ 0.0225 | US$ 0.14 | US$ 16.43 |
+| Public IPv4, one per AZ (2 AZs, D-003) | US$ 0.005/h each | US$ 0.010 | US$ 0.06 | US$ 7.30 |
+| NLB capacity units (LCU) | US$ 0.006 per LCU-hour | Depends on traffic (low for ≤ 10 BI users) | — | — |
+| **Total without LCU** | | **≈ US$ 0.0325** | **≈ US$ 0.20** | **≈ US$ 23.7** |
+
+The reference project used one NLB per interface (6 NLBs): ≈ US$ 0.195/h, ≈ US$ 142/month with
+the same prices.
+
+### Equivalents in the other clouds
+
+The controller runs in the cluster and is configured the same way on EKS, AKS and GKE. What
+changes is the single L4 load balancer created for its Service, and the cloud-managed
+alternative that each provider offers instead of an in-cluster controller.
+
+| | AWS (EKS) | Azure (AKS) | GCP (GKE) |
+|---|---|---|---|
+| L4 load balancer for the controller's Service | Network Load Balancer (D-016b) | Azure Standard Load Balancer (built in) | Passthrough Network Load Balancer (built in) |
+| Extra controller needed | D-016b B: yes; A: no | No | No |
+| Subnet tagging | `kubernetes.io/role/elb` | Not needed (to verify) | Not needed (to verify) |
+| What changes in the code | Service annotations | Service annotations | Service annotations |
+| Indicative price of the load balancer | US$ 0.0225/h + LCU | Hourly fee per rule + data processed (to verify) | Forwarding rule fee + data processed (to verify) |
+| Cloud-managed Gateway alternative | AWS Load Balancer Controller with ALB (Gateway API) | Application Gateway for Containers | GKE Gateway controller (Google Cloud L7 load balancers) |
+| Portability of the managed alternative | ❌ AWS-only | ❌ Azure-only | ❌ GCP-only |
+
+With an in-cluster controller, routes, TLS and rules stay identical in the three clouds
+(constitution VIII); a cloud-managed Gateway would require rewriting them when moving.
+
+### In the reference project
+
+No Gateway API: each interface (Airbyte, Airflow, Grafana, Metabase, OpenMetadata, API) had its
+own `type: LoadBalancer` Service with the `nlb` annotation, created by the legacy service
+controller (no AWS Load Balancer Controller); public subnets tagged `kubernetes.io/role/elb = 1`;
+a teardown script deleted the Argo CD Applications before `terraform destroy` to avoid orphan
+NLBs.
+
+### Recommendation
+
+- Controller: **A. Envoy Gateway** — focused on Gateway API, small, upstream Helm chart; one NLB
+  for all public routes.
+- D-016b: **B. AWS Load Balancer Controller** — recommended and maintained by AWS; the legacy
+  controller only receives critical fixes. Cost: one more small component and ELB permissions on
+  the single node role (D-004). A remains valid if simplicity weighs more (it worked in the
+  reference project).
+
+### Decision
+
+- **Decision**: Controller: A. Envoy Gateway. D-016b: Pending
+- **Rationale**: Gateway API only, small footprint, upstream Helm chart; one NLB for all public
+  routes, keeping routes and TLS identical across AWS, Azure and GCP.
+- **Chosen by**: the user, 2026-10-09 (controller)
+
+### Sources
+
+- [Gateway API implementations](https://gateway-api.sigs.k8s.io/implementations/)
+- [EKS best practices: load balancing](https://docs.aws.amazon.com/eks/latest/best-practices/load-balancing.html)
+- [AWS Load Balancer Controller on EKS](https://docs.aws.amazon.com/eks/latest/userguide/aws-load-balancer-controller.html)
+- [Subnet discovery tags](https://repost.aws/knowledge-center/eks-vpc-subnet-discovery)
+- [Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/)
+- AWS Price List API, service `AWSELB`, `us-east-2`, product family `Load Balancer-Network`
+  (queried 2026-10-09)
+
+---
+
+## D-017 TLS certificates and domain
+
+**Status**: Decided
+
+### Context
+
+- Business users and external systems reach the platform over the internet (FR-012, FR-013).
+- Encryption only where it adds no cost (FR-005); TLS certificates from Let's Encrypt are free.
+- A valid public certificate needs a domain name controlled by the project.
+
+### Options
+
+**A. cert-manager + Let's Encrypt, own domain** — certificates issued and renewed in the cluster;
+DNS records for the domain point to the NLB.
+**B. AWS Certificate Manager on the NLB** — TLS terminated at the load balancer with an ACM
+certificate.
+**C. Self-signed certificates** — no domain needed; browsers and clients warn or must trust the
+certificate.
+**D. No TLS** — plain HTTP.
+
+### Cost
+
+| Option | Cost |
+|---|---|
+| A | Certificates free; domain registration (yearly fee, depends on the registrar and extension) |
+| B | Public ACM certificates free; domain needed; TLS listener on the NLB (capacity units) |
+| C | None |
+| D | None |
+
+### Trade-offs
+
+| | A. cert-manager | B. ACM | C. Self-signed | D. No TLS |
+|---|---|---|---|---|
+| Trusted by browsers | ✅ | ✅ | ❌ | ❌ |
+| Portability | ✅ same in the three clouds | ❌ AWS-only | ✅ | ✅ |
+| Passwords protected in transit | ✅ | ✅ | ✅ | ❌ logins travel in clear text |
+| Needs a domain | Yes | Yes | No | No |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| cert-manager + Let's Encrypt (A) | Same | Same | Same |
+| DNS service for the domain's records | Route 53 | Azure DNS | Cloud DNS |
+| Cloud-managed certificates (like B) | AWS Certificate Manager (NLB/ALB) | Certificates on Application Gateway / Key Vault | Google-managed certificates (Google Cloud load balancers) |
+| Portability of cloud-managed certificates | ❌ | ❌ | ❌ |
+
+With A, only the DNS records move with the platform; the certificates are re-issued
+automatically in the new cluster. The domain can stay at any registrar.
+
+### In the reference project
+
+No TLS: interfaces are reached over plain HTTP on the load balancer addresses.
+
+### Recommendation
+
+**A. cert-manager + Let's Encrypt**, if a domain is available: free, portable and protects the
+individual logins. The domain itself is information from the user.
+
+### Consequences of option D
+
+| # | Consequence | Related to |
+|---|---|---|
+| 1 | Logins of the BI users and credentials of the external systems travel in clear text | FR-012, FR-013 |
+| 2 | Trino cannot authenticate users by password (TLS required by Trino) | D-019, D-026 |
+| 3 | No domain: one NLB serves BI and API by port or by path, not by host name | D-016 |
+| 4 | The NLB DNS name changes every time the cluster is recreated; users and external systems must receive the new address | D-016 |
+| 5 | Moving to TLS later changes only the `Gateway` (cert-manager and a domain, option A, or a self-signed certificate on one listener, option C); routes and applications stay the same | — |
+
+### Decision
+
+- **Decision**: D. No TLS
+- **Rationale**: Simplicity.
+- **Chosen by**: the user, 2026-10-09
+
+### Sources
+
+- To verify in the plan: cert-manager documentation, Let's Encrypt rate limits, ACM pricing.
+
+---
+
+## D-018 BI tool
+
+**Status**: Pending
+
+### Context
+
+- FR-012: up to 10 business users, each with an individual login, over the internet.
+- FR-006: sensitive data hidden from business users in BI. The requirement applies to all
+  business users; the spec does not require different profiles among them.
+- FR-004: every other functionality is accessed only by the technical team, so the BI tool must
+  not give business users access to the technical tools.
+- The BI tool reads the gold layer through Trino; LGPD is applied per user and group in the data
+  layers (spec Assumptions), that is, in Trino (D-026).
+- Public route through the `Gateway` (D-016), plain HTTP and no domain (D-017).
+
+### What any BI tool needs here
+
+| Need | How |
+|---|---|
+| Metadata database (users, dashboards) | PostgreSQL: bundled in the chart (D-010) or own plain YAML when the chart has none (as D-014) |
+| Connection to Trino | A Trino driver in the tool |
+| Individual logins for up to 10 users | Built-in user accounts of the tool (all options) |
+| Public access | One `HTTPRoute` on the `Gateway`; without a domain, a dedicated port or a path (D-016) |
+| Sensitive data hidden | Rules in Trino for the user the BI tool connects with (D-026) |
+
+### How the BI tool reaches Trino
+
+A BI tool connects to Trino with a service user; Trino applies its rules (D-026) to the user it
+sees.
+
+| Mode | User seen by Trino | Profiles among business users | Availability |
+|---|---|---|---|
+| 1. One service user | The same for every business user | One profile: sensitive data hidden for everybody (meets FR-006) | Every tool |
+| 2. One service user per group (e.g., `bi_general`, `bi_finance`) | One per group; the BI tool decides which group uses which connection | Per group | Needs per-group restriction of connections in the tool: Metabase open source ❌ (granular data permissions are Pro/Enterprise), Superset ✅ (to verify), Grafana open source ❌ (data source permissions are Enterprise/Cloud) |
+| 3. Impersonation (the tool passes the logged-in user) | Each person | Per user | Metabase Pro/Enterprise; Superset option "impersonate logged in user" (to verify); Grafana ❌. Needs Trino authentication (TLS, D-017) |
+
+Mode 1 is enough for FR-006. Modes 2 and 3 matter only if business users must see different data,
+which the spec does not require.
+
+### Options
+
+**A. Metabase (open source edition)** — BI for business users; questions built without SQL.
+**B. Apache Superset** — Apache project; dashboards and a SQL editor; role-based permissions in the
+open source edition.
+**C. Grafana (separate instance for BI)** — monitoring and time-series tool; a separate instance is
+needed, because business users in the observability Grafana would violate FR-004.
+
+### Trade-offs
+
+| | A. Metabase | B. Superset | C. Grafana |
+|---|---|---|---|
+| Purpose | Business BI | Business BI and SQL exploration | Monitoring, time series |
+| Business users build questions, filters and drill-down without SQL | ✅ | ⚠️ more technical | ❌ SQL per panel |
+| Trino driver | Starburst partner driver: a JAR placed in `/plugins`; not bundled in self-hosted Metabase | Python `trino` driver (included in the official image: to verify) | Trino data source plugin (to verify) |
+| Profiles among business users (modes 2, 3) | Paid editions only | ✅ open source (to verify) | Paid editions only |
+| Upstream Helm chart (constitution XIII) | ❌ no official chart (community chart or plain YAML) | ✅ official chart in the Apache Superset repository | ✅ official chart |
+| Metadata database | PostgreSQL required (default H2 file is not for production): own plain YAML | Bundled in the chart (to verify the subchart images) | SQLite file or PostgreSQL |
+| Components | 1 Deployment | Web + workers + Redis (workers and Redis for async queries; to verify if optional) | 1 Deployment |
+| Memory (indicative, to measure) | ≈ 1–2 GiB (JVM) | ≈ 1–2 GiB in total | ≈ 0.1–0.3 GiB |
+| Cost of that memory, always on | ≈ US$ 7.4–15/month | ≈ US$ 7.4–15/month | ≈ US$ 1–2/month |
+| arm64 image | ✅ | ✅ | ✅ |
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Metabase needs the Trino driver JAR: an init container that downloads it into `/plugins` (no registry) or a custom image (needs a registry, as in the reference project) | D-021 (registry) |
+| 2 | Business user passwords travel in clear text over HTTP | D-017 |
+| 3 | Without a domain the BI tool gets its own port on the `Gateway`; serving under a path depends on the tool (to verify) | D-016 |
+| 4 | The BI tool may be scaled to zero outside business hours; the spec does not state BI hours | D-022 |
+| 5 | Sensitive data is hidden by Trino rules for the BI service user, not by the tool | D-026 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Metabase / Superset / Grafana in the cluster (A–C) | Same | Same | Same |
+| Cloud-managed BI alternative | Amazon QuickSight | Power BI | Looker / Looker Studio |
+| Portability of the managed alternative | ❌ dashboards rebuilt when moving | ❌ | ❌ |
+| Licensing of the managed alternative | Per user/session (to verify) | Per user (to verify) | Per user (to verify) |
+
+The in-cluster options move with the platform unchanged; a managed BI service would have to be
+replaced and its dashboards rebuilt.
+
+### In the reference project
+
+Metabase v0.50.26 from plain YAML (`charts/metabase-eks/`), custom image in ECR that adds the
+Starburst Trino driver 6.1.0, own PostgreSQL, requests 1 GiB / limit 2 GiB (`-Xmx1g`), its own
+NLB, x86 nodes.
+
+### Recommendation
+
+**A. Metabase open source with mode 1**: easiest for business users and meets FR-006 with one
+Trino service user whose sensitive columns are hidden (D-026); Trino driver through an init
+container, so no registry is needed. If business users later need different profiles, **B.
+Superset** (open source) rather than a paid Metabase edition. C is a monitoring tool, not BI.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- [Metabase data permissions](https://www.metabase.com/docs/latest/permissions/data)
+- [Metabase row and column security](https://www.metabase.com/docs/latest/permissions/row-and-column-security)
+- [Starburst driver for Metabase](https://docs.starburst.io/clients/metabase.html)
+- [Grafana data source management](https://grafana.com/docs/grafana/latest/administration/data-source-management/)
+- Docker Hub image tags (architectures), queried 2026-10-10
+- To verify in the plan: Superset permissions per role and impersonation with Trino, Superset
+  chart dependencies, Grafana Trino plugin, Metabase under a path.
+
+---
+
+## D-019 Interface for external systems
+
+**Status**: Pending
+
+### Context
+
+- FR-013: external systems consume the processed data over the internet, each identified by its
+  own credential; requests without a valid credential are denied.
+- FR-006: sensitive data access restricted.
+- Public route through the `Gateway` (D-016), plain HTTP and no domain (D-017).
+- FR-017: data volume may grow 1000x; what external systems download grows with it.
+
+### Options
+
+**A. Trino directly** — each external system has its own Trino user and password; SQL queries
+through a `Gateway` listener.
+**B. Own API service** — a small HTTP API over the gold layer (as in the reference project), with
+one API key per system; the API queries Trino with a service user.
+**C. Direct Iceberg access** — external systems read the tables through the Polaris REST catalog
+and S3, each with its own Polaris principal.
+
+### What each option requires
+
+| | A. Trino | B. Own API | C. Polaris + S3 |
+|---|---|---|---|
+| Credential check (FR-013) | Trino password authentication, **which requires TLS** (D-017) | API key checked by the code; works over plain HTTP (key in clear text) | Polaris OAuth client credentials (sent in clear text over HTTP) |
+| Exposure on the `Gateway` | Trino port (Trino clients do not use a path prefix: to verify); `http-server.process-forwarded=true` | API port or path | Polaris port; the data itself is read from S3 |
+| Cloud permissions | None new | None new | Polaris vends temporary S3 credentials: it needs an IAM role it can assume (changes D-004) |
+| Code to write and maintain | None | API code, image, tests | None |
+| Sensitive data (D-026) | Trino rules per system ✅ | Trino rules for the API user + code ✅ | ❌ no column masks or row filters; Polaris grants per table only |
+| What consumers need | A Trino client (JDBC, Python, CLI) | HTTP | An Iceberg engine |
+
+### Cost
+
+| Item | Price |
+|---|---|
+| Data transfer out of AWS to the internet (all options; through the NLB for A and B, from S3 for C) | US$ 0.09/GB for the first 10 TB/month beyond the free tier (AWS Price List API, `us-east-2`) |
+| Example: 10 GB/day downloaded | ≈ 300 GB/month ≈ US$ 27/month (before free tier) |
+| Example at FR-017 scale: 1 TB/day downloaded | ≈ 30 TB/month ≈ US$ 2,660/month (tiered: US$ 0.09 then 0.085) |
+| B: API pod | ≈ 0.1–0.25 GiB (to measure) ≈ US$ 1–2/month |
+| NLB capacity units | US$ 0.006 per LCU-hour (D-016) |
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | A needs TLS on the Trino listener: D-017 would have to change for that listener (e.g., a self-signed certificate that the external systems trust, without a domain) | D-017 |
+| 2 | Each option adds one listener (port) to the `Gateway` | D-016 |
+| 3 | B needs an image, a registry and a build (CI) | D-021 |
+| 4 | C needs an IAM role for Polaris and bypasses Trino rules | D-004, D-026 |
+| 5 | Data downloaded by external systems is charged as data transfer out | Constitution II |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Trino (A) / own API (B) | Same | Same | Same |
+| Iceberg catalog + object storage (C) | Polaris + S3 (STS for vended credentials) | Polaris + Blob Storage / ADLS (SAS tokens, to verify) | Polaris + Cloud Storage (downscoped tokens, to verify) |
+| Data transfer out to the internet | Charged per GB | Charged per GB (to verify) | Charged per GB (to verify) |
+| Cloud-managed SQL access alternative | Amazon Athena | Synapse serverless SQL / Fabric (to verify Iceberg support) | BigQuery (BigLake Iceberg tables) |
+| Portability of the managed alternative | ❌ | ❌ | ❌ |
+
+A and B are identical in the three clouds; C changes the storage credential mechanism; a managed
+query service would change the endpoint and credentials of every consumer.
+
+### In the reference project
+
+Option B: `code/api-service` (FastAPI + DuckDB), one API key shared by every system in the
+`X-API-Key` header (default `changeme`), its own NLB. A single shared key does not meet FR-013
+(one credential per system).
+
+### Recommendation
+
+**A. Trino directly, with a self-signed certificate on the Trino listener only**: no code to
+maintain, one credential per system and the same Trino rules that protect BI (D-026). It requires
+revisiting D-017 for that listener. If TLS stays out completely, **B. own API** with one key per
+system is the option that meets FR-013 over plain HTTP.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- [Trino password file authentication](https://trino.io/docs/current/security/password-file.html)
+- [Trino TLS and load balancers](https://trino.io/docs/current/security/tls.html)
+- AWS Price List API, service `AWSDataTransfer`, `us-east-2` outbound (queried 2026-10-10)
+- To verify in the plan: Polaris credential vending, Trino clients behind a path, data transfer
+  free tier.
+
+---
+
+## D-020 Airflow executor
+
+**Status**: Pending
+
+### Context
+
+- FR-010: schedule, on demand and tumbling windows; FR-011: daily batch.
+- Constitution II: cost tending to zero; Spot group for interruptible work (D-001).
+- N-001: Airflow is one of the largest always-on memory consumers.
+
+### Options
+
+**A. KubernetesExecutor** — one pod per task, created on demand and removed afterwards.
+**B. CeleryExecutor** — long-running workers plus a message broker (Redis); the Airflow chart can
+scale the workers with KEDA, down to zero (to verify).
+**C. LocalExecutor** — tasks run inside the scheduler pod.
+
+### Trade-offs
+
+| | A. Kubernetes | B. Celery | C. Local |
+|---|---|---|---|
+| Idle cost | ✅ no workers | ❌ broker + workers always on; ⚠️ workers to zero only with KEDA (D-022) | ✅ but the scheduler is sized for the peak |
+| Tasks on Spot nodes | ✅ per task (pod template) | ⚠️ whole workers | ❌ on the scheduler's node (On-Demand base) |
+| Extra components | None | Redis, workers | None |
+| Isolation per task | ✅ own pod | ⚠️ shared worker | ❌ shared with the scheduler |
+| Task start time | Pod start: seconds to about a minute (image pull; to measure) | Immediate | Immediate |
+| Task logs after the task ends | Pod is deleted: needs remote logging (e.g., S3) or a volume | Kept on the worker | Kept on the scheduler |
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | With A, every dbt task started by Cosmos becomes a pod; the per-pod start time adds up per dbt model | D-021 |
+| 2 | With A, task logs need remote logging: an S3 bucket (Terraform) and S3 permission on the node role | D-004, P1 S3 buckets |
+| 3 | With B, scaling workers to zero needs KEDA | D-022 |
+| 4 | With A, task pods can be placed on the Spot group; an interrupted task is retried | D-001 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Airflow in the cluster with any executor (A–C) | Same | Same | Same |
+| Remote logging bucket (A) | S3 | Blob Storage | Cloud Storage |
+| Cloud-managed Airflow alternative | Amazon MWAA | Managed Airflow in Azure Data Factory (status to verify) | Cloud Composer |
+| Portability of the managed alternative | ⚠️ DAGs portable, environment and pricing not | ⚠️ | ⚠️ |
+
+The executor does not depend on the cloud; only the remote logging target changes.
+
+### In the reference project
+
+Option A: `executor: KubernetesExecutor`, `workers.replicas: 0` (`apps/eks/airflow-app.yaml`); no
+remote logging setting in that file.
+
+### Recommendation
+
+**A. KubernetesExecutor** with remote logging to S3: no idle workers, each task can run on Spot,
+no broker.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- To verify in the plan: Airflow 3 executors, remote logging, the official Airflow Helm chart
+  (KEDA for Celery workers, pod template).
+
+---
+
+## D-021 Delivery of DAGs and the dbt project; dbt execution
+
+**Status**: Pending
+
+### Context
+
+- DAGs and the dbt project are data-scope code; the infrastructure delivers them to Airflow and
+  provides a way to run dbt against Trino.
+- The repository is public (D-008); Argo CD already reads it.
+- Executor: D-020. Images must support arm64 (D-007).
+
+Two questions: **how the DAGs reach Airflow** and **where dbt runs**.
+
+### Options: how the DAGs reach Airflow
+
+**A. git-sync** — a sidecar copies the DAG folder from the repository into Airflow (Airflow Helm
+chart option); with KubernetesExecutor each task pod also fetches it (to verify). Airflow 3 also
+offers Git DAG bundles (to verify as an alternative to the sidecar).
+**B. Custom Airflow image** — DAGs (and dbt, Cosmos) baked into an image pushed to a registry (as
+in the reference project).
+**C. Sync from S3** — DAGs uploaded to a bucket and synced into Airflow.
+
+| | A. git-sync | B. Custom image | C. S3 sync |
+|---|---|---|---|
+| Build and registry | None | Build (CI) + registry on every change | Upload step |
+| Time from commit to Airflow | Minutes (sync interval) | Build + image bump + deploy | Upload |
+| Git as source of truth (constitution VI) | ✅ | ⚠️ image as intermediate | ❌ |
+| Portability | ✅ | ⚠️ registry per cloud, unless a cloud-independent one | ⚠️ storage per cloud |
+
+### Options: where dbt runs
+
+**1. Cosmos, local mode** — dbt and Cosmos installed in the Airflow image; one Airflow task per dbt
+model (needs a custom Airflow image).
+**2. Cosmos, kubernetes mode** — Cosmos creates one pod per dbt model from a dbt image (Cosmos still
+installed in the Airflow image).
+**3. Cosmos, watcher mode** — one dbt process per DAG run, Airflow tasks follow each model's status
+(Cosmos ≥ 1.11; to verify with the executor).
+**4. One pod per run, without Cosmos** — a `KubernetesPodOperator` runs `dbt build` from a dbt image;
+one Airflow task for the whole project.
+
+| | 1. Cosmos local | 2. Cosmos kubernetes | 3. Cosmos watcher | 4. One pod per run |
+|---|---|---|---|---|
+| Per-model view, retry in Airflow | ✅ | ✅ | ✅ | ❌ (dbt logs only) |
+| Custom Airflow image | Yes | Yes (Cosmos) | Yes (Cosmos) | No (provider in the official image: to verify) |
+| dbt image (dbt-trino + project) | No | Yes | Depends on the executor (to verify) | Yes |
+| Pods per run with KubernetesExecutor (D-020 A) | One per model | Two per model (task + dbt pod) | Fewer (one dbt process) | Two (task + dbt pod) |
+| DAG parsing cost | High without a manifest (reference project: peaks ≈ 653 MiB) | Manifest recommended | Manifest recommended | None |
+
+### Cost
+
+- Registry: Amazon ECR ≈ US$ 0.10/GB-month (to verify); GitHub Container Registry free for public
+  packages (to verify). Build: GitHub Actions on a public repository (free minutes: to verify).
+- Each pod start costs time, not money, while nodes exist; more pods per run lengthen the batch
+  and keep Spot nodes longer.
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Any option with an image needs a registry and a build pipeline (CI), which is not decided yet | Constitution XI, VIII |
+| 2 | Image tags must be pinned and bumped in Git for Argo CD to deploy them | Constitution VI, X |
+| 3 | With D-020 A, options 1 and 2 multiply pods per run | D-020 |
+| 4 | dbt connects to Trino with its own service user; Trino rules apply to it | D-026 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| git-sync from the public repository (A) | Same | Same | Same |
+| Image registry (B; dbt image) | Amazon ECR | Azure Container Registry | Artifact Registry |
+| Object storage for C | S3 | Blob Storage | Cloud Storage |
+| Cloud-independent registry | GitHub Container Registry (same in the three) | Same | Same |
+
+A depends only on Git; images depend on a cloud registry unless a cloud-independent one is used.
+
+### In the reference project
+
+Option B with dbt option 1: custom image `data-platform/airflow-dags` in ECR (DAGs, dbt project,
+`astronomer-cosmos[dbt-trino]`), built by GitHub Actions, used by the scheduler and the task pods.
+Cosmos loaded the project without a manifest (parse peaks ≈ 653 MiB, ≈ 470m CPU) and needed
+`AIRFLOW__COSMOS__ENABLE_CACHE=False` to test DAG imports in CI.
+
+### Recommendation
+
+**A. git-sync** for the DAGs and **4. one pod per run** for dbt, with a dbt-trino image (project
+included) built by GitHub Actions and pushed to GitHub Container Registry: the Airflow image stays
+official and the registry is the same in the three clouds. If per-model tasks in Airflow become
+necessary, move to Cosmos (3. watcher or 2. kubernetes) with a manifest.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- [Cosmos execution modes](https://github.com/astronomer/astronomer-cosmos/blob/main/docs/getting_started/execution-modes.rst)
+- [Cosmos 1.14 watcher mode](https://www.astronomer.io/blog/cosmos-1-14-battle-tested-watcher-mode/)
+- To verify in the plan: Airflow Helm chart git-sync, Airflow 3 DAG bundles, dbt-trino images,
+  registry pricing.
+
+---
+
+## D-022 Scaling workloads with demand
+
+**Status**: Pending
+
+### Context
+
+- Constitution II and FR-003: capacity scales with demand and cost tends to zero when idle.
+- Nodes follow the pods (Cluster Autoscaler, D-001): a node is removed only when its pods fit
+  elsewhere or are gone (after an idle period, 10 minutes by default: to verify). Scaling a pod to
+  zero saves money only when it lets a node go.
+- Daily batch (FR-011); BI used by up to 10 people (FR-012).
+
+### What runs always and what runs on demand
+
+| Component | Today's plan | Can follow demand? |
+|---|---|---|
+| Airbyte sync jobs, Airflow task pods (D-020 A), dbt pods (D-021) | Created per job | Already on demand |
+| Trino workers | Not decided | ✅ needed only during processing and queries |
+| BI tool | Always on | ⚠️ could stop outside business hours (hours not in the spec) |
+| OpenMetadata, its search engine | Always on | ⚠️ used by the technical team on demand |
+| Trino coordinator, Airflow control components, Airbyte control plane, Polaris, databases, Argo CD, Prometheus/Grafana, Envoy Gateway | Always on | ❌ must answer at any time |
+
+### Options
+
+**A. KEDA** — scales workloads from schedules (cron), metrics or events, including to zero; HTTP
+traffic needs the KEDA HTTP add-on (maturity to verify).
+**B. Airflow scales the workloads** — DAG tasks scale Trino workers up before processing and back to
+zero afterwards.
+**C. Kubernetes Horizontal Pod Autoscaler only** — scales on CPU/memory; does not go to zero.
+**D. Fixed replicas** — no workload scaling; only nodes scale.
+
+### Trade-offs
+
+| | A. KEDA | B. Airflow | C. HPA | D. Fixed |
+|---|---|---|---|---|
+| Scale to zero | ✅ | ✅ (what the DAG controls) | ❌ | ❌ |
+| Covers BI and OpenMetadata by schedule | ✅ cron | ❌ | ❌ | ❌ |
+| Extra component | Operator | None | None (built in) | None |
+| Permissions | KEDA's own | Airflow's service account must scale the Trino Deployment (Kubernetes RBAC) | None | None |
+| Simplicity | ⚠️ | ✅ | ✅ | ✅ |
+| Portability | ✅ | ✅ | ✅ | ✅ |
+
+### Cost
+
+Example: a Trino worker with 4 GiB (to measure) costs ≈ US$ 30/month always on, ≈ US$ 1.2/month if
+it runs 1 hour a day (Spot would lower both). The BI tool (≈ 1–2 GiB) costs ≈ US$ 7.4–15/month
+always on, about one third of that if it runs 8 hours on working days.
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Argo CD reverts replica changes made by KEDA or Airflow unless `replicas` is left out of the values or ignored (`ignoreDifferences`) | Constitution VI |
+| 2 | Trino with zero workers: the coordinator must also run queries (`node-scheduler.include-coordinator=true`, as in the reference project) | — |
+| 3 | Scaling Trino workers down while a query runs fails it: graceful shutdown or scale-down only after the batch | D-020 |
+| 4 | A BI tool scaled to zero is unavailable until scaled up; business hours are information from the user | D-018, FR-012 |
+| 5 | The largest saving in a lab is turning the whole cluster off between sessions; that is an operating procedure, not workload scaling | Plan cost estimate |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| KEDA (A) | Installed by you (Helm chart) | Available as a managed AKS add-on, or Helm chart | Installed by you (Helm chart) |
+| Airflow scaling Trino (B) | Same | Same | Same |
+| HPA (C) / fixed replicas (D) | Built into Kubernetes | Same | Same |
+| Node scaling underneath | Cluster Autoscaler (D-001) | Built-in cluster autoscaler | Built-in cluster autoscaler |
+
+All options are Kubernetes-level and move unchanged; only the node autoscaler underneath is
+provided by each cloud.
+
+### In the reference project
+
+No workload scaling: Trino runs with zero workers (the coordinator also executes queries); other
+components have fixed replicas.
+
+### Recommendation
+
+**B. Airflow scales Trino workers** around the daily batch (no extra component) and **D. fixed
+replicas** for the rest at first; add **A. KEDA** with cron if the BI tool or OpenMetadata should
+stop outside business hours.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- To verify in the plan: Cluster Autoscaler scale-down settings, KEDA cron scaler and HTTP add-on,
+  Trino Helm chart worker settings and graceful shutdown, Argo CD `ignoreDifferences`.
+
+---
+
+## D-023 Cost visibility
+
+**Status**: Pending
+
+### Context
+
+- FR-014: the technical team sees executions and failures, resource usage and cost.
+- Constitution VIII: portability.
+- Lab usage: the cluster runs in sessions of a few hours (plan cost estimate).
+
+### Options
+
+**A. OpenCost** — open source (CNCF); cost per namespace/workload from Prometheus metrics and cloud
+list prices; real time; shown in its UI or Grafana.
+**B. AWS Cost Explorer with cost allocation tags** — AWS bill per tag (e.g., per step or component)
+in the AWS console.
+**C. EKS split cost allocation data** — AWS adds pod-level costs (CPU and memory share of each
+instance) to the Cost and Usage Report, with tags such as `aws:eks:namespace`.
+**D. A + B** — in-cluster cost per workload and the full AWS bill.
+
+### Trade-offs
+
+| | A. OpenCost | B. Cost Explorer + tags | C. Split cost allocation | D. A + B |
+|---|---|---|---|---|
+| Granularity | Workload / namespace | AWS resource and tag | Pod / namespace and AWS resource | Both |
+| Non-cluster costs (NAT, NLB, S3, EKS fee) | ❌ (cluster allocation only) | ✅ | ✅ | ✅ |
+| Delay | Real time | Billing data, updated at least daily (to verify) | Report delivery, daily (to verify) | Both |
+| Extra component | In-cluster service (needs Prometheus, P5) | None | Report export to S3 + a query tool (e.g., Athena) | In-cluster service |
+| Uses actual Spot prices | ⚠️ list prices unless configured (to verify) | ✅ | ✅ | ✅ (B) |
+| Portability | ✅ | ❌ AWS-only | ❌ AWS-only | ⚠️ |
+
+### Cost
+
+- A: memory of the OpenCost pod (small, to measure).
+- B: the Cost Explorer console is free; API requests US$ 0.01 each (to verify). Cost allocation
+  tags must be activated in the Billing console and appear for new costs only (to verify delay).
+- C: no charge for the feature found in the documentation read (to verify); S3 storage of the
+  report and Athena queries (per data scanned).
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | B needs tags on every Terraform resource (provider `default_tags`) and on resources created by controllers: EBS volumes (EBS CSI driver tags), the NLB (D-016b), nodes (node group tags) | Constitution V, D-015, D-016 |
+| 2 | A needs Prometheus, so it comes with P5 | P5 |
+| 3 | C adds an S3 export and a query service | P1 S3 buckets, constitution III |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| OpenCost (A) | Uses AWS prices | Uses Azure prices | Uses GCP prices |
+| Billing by tag/label (like B) | Cost Explorer + cost allocation tags | Cost Management + tags | Cloud Billing reports + labels |
+| Pod-level cost from the cloud (like C) | EKS split cost allocation data | AKS cost analysis (to verify) | GKE cost allocation (to verify) |
+
+OpenCost gives the same per-workload view in the three clouds; the bill-level view always comes
+from each cloud's billing service, so B and C must be redone when moving.
+
+### In the reference project
+
+No cost visibility.
+
+### Recommendation
+
+**D. OpenCost plus AWS cost allocation tags**: OpenCost answers "which workload costs what" in
+real time during a session; tags answer "what does each step cost" in the AWS bill, including
+NAT, NLB and S3.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- [EKS split cost allocation data](https://docs.aws.amazon.com/cur/latest/userguide/split-cost-allocation-data.html)
+- To verify in the plan: OpenCost on EKS (Spot prices), Cost Explorer API pricing, activation of
+  cost allocation tags.
+
+---
+
+## D-024 Alert channel
+
+**Status**: Pending
+
+### Context
+
+- FR-015: the technical team is alerted when something fails; FR-014: failures are visible.
+- Prometheus/Grafana is decided; Alertmanager comes with the usual Prometheus stack.
+- Alerts exist only while the cluster runs (lab sessions).
+
+### What must raise an alert
+
+| Source | How the failure reaches the alert system |
+|---|---|
+| Cluster and pods (node down, pod crash loops, volume full) | Default Prometheus alert rules of the stack |
+| Airflow task and DAG failures | Airflow metrics exported to Prometheus (StatsD exporter in the Airflow chart: to verify) with an alert rule; or Airflow failure callbacks (notifiers) sending directly to the channel |
+| Airbyte sync failures | Airbyte notifications (webhook) or metrics (to verify) |
+| OpenMetadata ingestion failures | To verify |
+
+### Options
+
+**A. Alertmanager → email** — needs an SMTP account (e.g., an app password); credential from `.env`
+(D-011).
+**B. Alertmanager → chat (Slack, Telegram, Microsoft Teams)** — needs a webhook URL or bot token
+(a secret, from `.env`).
+**C. Grafana alerting** — rules and contact points in Grafana instead of Alertmanager.
+**D. Amazon SNS** — email/SMS from AWS.
+
+### Trade-offs
+
+| | A. Email | B. Chat | C. Grafana | D. SNS |
+|---|---|---|---|---|
+| What the team needs | Mailbox + SMTP credential | Chat workspace + webhook | Same channels as A/B | AWS subscription confirmation |
+| Secret to keep in `.env` | SMTP password | Webhook URL / token | Same as A/B | None (node role permission) |
+| Extra component | None | None | None (but a second place for rules) | SNS topic (Terraform) |
+| Portability | ✅ | ✅ | ✅ | ❌ |
+| Cost | None | None | None | First 1,000 emails/month free, then per notification (to verify) |
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Alert rules in Prometheus and in Grafana at the same time would split them in two places; choose one | Constitution III |
+| 2 | Airflow failures need either metrics in Prometheus or Airflow notifiers; the choice affects the Airflow configuration | D-020 |
+| 3 | The channel credential is one more secret in `.env` | D-011 |
+| 4 | D needs SNS publish permission on the node role | D-004 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Alertmanager → email or chat (A, B) | Same | Same | Same |
+| Grafana alerting (C) | Same | Same | Same |
+| Cloud-managed notification alternative (like D) | Amazon SNS | Azure Monitor action groups | Cloud Monitoring notification channels |
+| Portability of the managed alternative | ❌ | ❌ | ❌ |
+
+A, B and C move unchanged; only the email or chat credential is reused.
+
+### In the reference project
+
+Alertmanager is enabled in the observability values; no receiver is configured, so alerts reach
+no one.
+
+### Recommendation
+
+**A or B through Alertmanager**, with Airflow failures exported as metrics so that all alerts
+follow one path. The channel itself is information from the user.
+
+### Decision
+
+- **Decision**: Pending (information from the user: which channel)
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- To verify in the plan: Alertmanager receivers, Airflow metrics and notifiers, Airbyte
+  notifications, SNS pricing.
+
+---
+
+## D-025 OpenMetadata search engine
+
+**Status**: Pending
+
+### Context
+
+- OpenMetadata ≥ 1.12 (user decision, P6) needs a database (D-010: bundled) and a search engine.
+- OpenMetadata 1.12 documentation: Elasticsearch 9.x (minimum 9.0.0) or OpenSearch 3.x (minimum
+  3.0.0 on the requirements page, 3.2.0 in the 1.12.6 upgrade guide: to resolve).
+- Memory is the main cost driver (N-001).
+
+### Options
+
+**A. OpenSearch 3.x** — Apache 2.0, Linux Foundation project, official Helm chart.
+**B. Elasticsearch 9.x** — Elastic's engine.
+
+### Trade-offs
+
+| | A. OpenSearch 3.x | B. Elasticsearch 9.x |
+|---|---|---|
+| License | Apache 2.0 | Elastic licenses (AGPL option: to verify) |
+| Kubernetes delivery | ✅ official Helm chart (opensearch-project) | ⚠️ Elastic handed its Helm charts to the community at 8.5.1; supported path is the ECK operator (extra component) |
+| Constitution XIII (upstream chart, simple) | ✅ | ⚠️ |
+| Memory (single node, dev) | JVM; ≈ 2 GiB to measure | JVM; ≈ 2 GiB to measure |
+| arm64 image | ✅ | To verify |
+
+### Cost
+
+A single node with ≈ 2 GiB (to measure) costs ≈ US$ 15/month always on, plus its EBS volume
+(US$ 0.08/GB-month; 10 GB ≈ US$ 0.80/month). The production sizing in the OpenMetadata
+documentation (2 vCPU, 8 GiB, 100 GiB storage) would cost ≈ US$ 60/month in memory alone.
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | OpenSearch/Elasticsearch need the kernel setting `vm.max_map_count` ≥ 262144 on the node: a privileged init container (chart option) or node configuration (to verify) | D-007 node groups |
+| 2 | OpenSearch with the security plugin needs an initial admin password: one more secret in `.env` | D-011 |
+| 3 | The reference project's OpenSearch 2.x (chart 2.21.0) does not meet OpenMetadata 1.12 | — |
+| 4 | Persistent volume on EBS gp3 | D-015 |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| OpenSearch / Elasticsearch in the cluster (A, B) | Same | Same | Same |
+| Cloud-managed search alternative | Amazon OpenSearch Service (up to 3.3) | Elastic Cloud on Azure (partner service) | Elastic Cloud on Google Cloud (partner service) |
+| Indicative cost of the managed alternative | Instance hours + storage (to verify) | Partner subscription (to verify) | Partner subscription (to verify) |
+
+The in-cluster engine moves unchanged; a managed service adds a fixed monthly cost and a different
+setup in each cloud.
+
+### In the reference project
+
+Option A with OpenSearch Helm chart 2.21.0 (OpenSearch 2.x) and an older OpenMetadata
+(`openmetadata-dependencies` chart 1.5.4), on x86 nodes.
+
+### Recommendation
+
+**A. OpenSearch 3.x**, single node with reduced memory for `dev`: official chart, Apache 2.0, no
+operator.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- [OpenMetadata 1.12 minimum requirements](https://docs.open-metadata.org/v1.12.x/deployment/minimum-requirements)
+- [OpenMetadata 1.12 upgrade guide](https://docs.open-metadata.org/v1.12.x/deployment/upgrade)
+- [OpenMetadata production requirements](https://docs.open-metadata.org/v1.12.x/deployment/production-ready-requirements)
+- [Elastic Helm charts status](https://github.com/elastic/helm-charts/blob/main/README.md)
+- To verify in the plan: `vm.max_map_count` on EKS nodes, OpenSearch chart version for 3.x.
+
+---
+
+## D-026 Enforcement of data access control and sensitive data
+
+**Status**: Pending
+
+### Context
+
+- FR-006: access to sensitive data restricted; hidden from business users in BI.
+- FR-016: catalog, lineage, access control and classification of sensitive data. OpenMetadata
+  catalogs and classifies; it does not block queries.
+- LGPD is applied per user and group in the data layers (spec Assumptions).
+- Single node role (D-004): any pod can read S3 directly, bypassing Trino; only the technical team
+  deploys workloads.
+
+### Who Trino sees
+
+| Client | Trino user | Through |
+|---|---|---|
+| BI tool | One service user, or one per group (D-018 modes) | In-cluster |
+| External systems | One user per system (D-019 A) or the API's user (D-019 B) | `Gateway` |
+| dbt / Airflow | Service user | In-cluster |
+| Technical team | Personal users | `kubectl port-forward` |
+
+### Prerequisite: authentication
+
+Rules per user protect only if Trino knows who the user is. Trino password authentication requires
+TLS, and D-017 chose no TLS:
+
+| Way | How | Protects | Limits |
+|---|---|---|---|
+| i. No authentication, Trino not public | Only in-cluster clients and port-forward reach Trino; user names are trusted | BI users (they never talk to Trino directly) | D-019 A impossible; any in-cluster client can claim any user (technical team only) |
+| ii. TLS on Trino only | Certificate inside the cluster (self-signed or cert-manager internal issuer) + password file; the external listener passes TLS through | Every client, including external systems | Certificate management; external systems must trust the certificate (changes D-017 for that listener) |
+
+### Options (enforcement)
+
+**A. Trino file-based access control** — a rules file per catalog/schema/table with `filter` (row
+filter, SQL condition), `mask` (column mask, SQL expression) and `allow: false` (hidden column),
+matched by user, group or role; groups from a group file (`group:user1,user2`). Both files are
+delivered from Git and re-read periodically.
+**B. Trino + Open Policy Agent** — Trino asks an OPA server for each decision; policies in Rego.
+**C. Apache Ranger** — central policy server with UI and audit.
+**D. BI-only restrictions** — rules inside the BI tool (D-018).
+
+### Trade-offs
+
+| | A. File-based | B. OPA | C. Ranger | D. BI-only |
+|---|---|---|---|---|
+| Covers BI and external systems | ✅ | ✅ | ✅ | ❌ BI only |
+| Row filters and column masks | ✅ | ✅ (to verify) | ✅ | Metabase: paid editions; Superset: row-level only (to verify) |
+| Extra components | None | OPA server | Ranger admin + database (+ audit store) | None |
+| Memory (indicative) | None | Small (to measure) | ≈ 1–2 GiB + database (to measure) | None |
+| Where rules live | Git (plain YAML/JSON) | Git (Rego) | Ranger database (UI) | BI database (UI) |
+| Simplicity | ✅ | ⚠️ | ❌ | ✅ |
+| Portability | ✅ | ✅ | ✅ | ✅ |
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Classification in OpenMetadata does not reach Trino automatically: rules are written from the classification (by hand, or a later script) | FR-016, P6 |
+| 2 | Authentication way i rules out D-019 A; way ii changes D-017 for the Trino listener | D-017, D-019 |
+| 3 | The BI service user sees only the gold layer, with sensitive columns masked or hidden | D-018 |
+| 4 | Direct reads of S3 or Polaris bypass Trino; restricted to technical workloads by D-004 and FR-004 | D-004, D-019 C |
+| 5 | The rules and group files are configuration delivered by Argo CD; who edits them (data or infra team) is a process question | Constitution VI |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Trino access control (A, B), Ranger (C) | Same | Same | Same |
+| Cloud-managed data access governance | AWS Lake Formation | Microsoft Purview (policies, to verify) | Dataplex / BigQuery policy tags |
+| Portability of the managed alternative | ❌ | ❌ | ❌ |
+
+Rules enforced in Trino move with the platform; cloud governance services enforce access only
+inside their own cloud's query engines and storage.
+
+### In the reference project
+
+No data access control; catalog passwords are in plain text in the Trino configuration.
+
+### Recommendation
+
+**A. Trino file-based access control**, with authentication way **i** if D-019 is not A, or way
+**ii** if it is: one place protects BI and external systems, no extra component, rules versioned in
+Git.
+
+### Decision
+
+- **Decision**: Pending
+- **Rationale**: —
+- **Chosen by**: —
+
+### Sources
+
+- [Trino file-based access control](https://trino.io/docs/current/security/file-system-access-control.html)
+- [Trino file group provider](https://trino.io/docs/current/security/group-file.html)
+- [Trino password file authentication](https://trino.io/docs/current/security/password-file.html)
+- To verify in the plan: Trino OPA plugin (row filters, masks), Ranger plugin for Trino.
+
+---
+
 ## N-001 Memory and cost reduction for Argo CD and Airflow
 
 **Status**: Noted by the user as important for cost; to apply in the plan and implementation.
@@ -1398,7 +2520,7 @@ chosen versions.
 ### Expected effect
 
 With these measures the On-Demand base (Argo CD + Airflow control components) is expected to fit
-in 1–2 nodes of 2 vCPU / 8 GiB (≈ US$ 70–140/month with m6i.large at US$ 0.096/h), instead of
+in 1–2 nodes of 2 vCPU / 8 GiB (≈ US$ 60–120/month with m7g.large at US$ 0.0816/h, D-007), instead of
 about 3 nodes with the production profile; to be confirmed by measurement in step 0.
 
 ### Sources
