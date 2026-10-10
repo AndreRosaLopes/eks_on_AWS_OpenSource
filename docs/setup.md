@@ -4,7 +4,7 @@ AI tooling for this repository: Claude Code, AWS, Terraform and GitHub Spec Kit.
 
 ## 1. Prerequisites
 
-Claude Code, AWS CLI v2, Terraform, Docker (running), Python 3.11+ with `uv`, Git and `gh`.
+Claude Code, AWS CLI v2, Terraform, `kubectl`, Docker (running), Python 3.11+ with `uv`, Git and `gh`. The deploy, teardown and verify commands run in Git Bash.
 
 ## 2. AWS
 
