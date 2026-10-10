@@ -1362,19 +1362,24 @@ trade-offs, cost, impacts on other steps and decisions, the equivalents in the o
 the reference project does and a recommendation; the user decides. Facts marked "to verify" must
 be confirmed in the plan (constitution XII).
 
+**Adopted without individual review.** On 2026-10-10 the user adopted every pending
+recommendation at once (D-016b, D-018 to D-026) to move forward, to be re-evaluated later. These
+entries are marked "Adopted (to re-evaluate)"; the commit that records them is the point to
+return to.
+
 | ID | Decision | Functionality | Status |
 |---|---|---|---|
-| D-016 | Gateway API controller and public load balancer | P4 (public entry) | Decided: A. Envoy Gateway; D-016b (who creates the NLB) Pending |
-| D-017 | TLS certificates and domain | P4 | Decided: D. No TLS |
-| D-018 | BI tool | P4 | Pending |
-| D-019 | Interface for external systems | P4 | Pending |
-| D-020 | Airflow executor | P3 | Pending |
-| D-021 | Delivery of DAGs and the dbt project; dbt execution | P2/P3 | Pending |
-| D-022 | Scaling workloads with demand (cost tending to zero) | P2–P4 | Pending |
-| D-023 | Cost visibility | P5 | Pending |
-| D-024 | Alert channel | P5 | Pending |
-| D-025 | OpenMetadata search engine | P6 | Pending |
-| D-026 | Enforcement of data access control and sensitive data | P4/P6 | Pending |
+| D-016 | Gateway API controller and public load balancer | P4 (public entry) | Decided: A. Envoy Gateway; D-016b adopted (to re-evaluate): B. AWS Load Balancer Controller |
+| D-017 | TLS certificates and domain | P4 | Decided: D. No TLS; amended by D-019 (self-signed TLS on the Trino listener) |
+| D-018 | BI tool | P4 | Adopted (to re-evaluate): A. Metabase open source (mode 1) |
+| D-019 | Interface for external systems | P4 | Adopted (to re-evaluate): A. Trino directly (self-signed TLS on the Trino listener) |
+| D-020 | Airflow executor | P3 | Adopted (to re-evaluate): A. KubernetesExecutor + remote logging to S3 |
+| D-021 | Delivery of DAGs and the dbt project; dbt execution | P2/P3 | Adopted (to re-evaluate): A. git-sync; dbt: 4. one pod per run (image in GHCR) |
+| D-022 | Scaling workloads with demand (cost tending to zero) | P2–P4 | Adopted (to re-evaluate): B. Airflow scales Trino workers + D. fixed replicas |
+| D-023 | Cost visibility | P5 | Adopted (to re-evaluate): D. OpenCost + AWS cost allocation tags |
+| D-024 | Alert channel | P5 | Adopted (to re-evaluate): Alertmanager (A or B); channel pending (information from the user) |
+| D-025 | OpenMetadata search engine | P6 | Adopted (to re-evaluate): A. OpenSearch 3.x |
+| D-026 | Enforcement of data access control and sensitive data | P4/P6 | Adopted (to re-evaluate): A. Trino file-based access control (authentication way ii) |
 
 ### Common basis for the entries below
 
@@ -1429,7 +1434,7 @@ Suggested order: D-026 → D-018 → D-019 → D-016b; D-020 → D-021 → D-022
 
 ## D-016 Gateway API controller and public load balancer
 
-**Status**: Decided (controller: A. Envoy Gateway); load balancer provisioning (D-016b) Pending
+**Status**: Decided (controller: A. Envoy Gateway); D-016b decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -1560,10 +1565,10 @@ NLBs.
 
 ### Decision
 
-- **Decision**: Controller: A. Envoy Gateway. D-016b: Pending
+- **Decision**: Controller: A. Envoy Gateway. D-016b: B. AWS Load Balancer Controller
 - **Rationale**: Gateway API only, small footprint, upstream Helm chart; one NLB for all public
   routes, keeping routes and TLS identical across AWS, Azure and GCP.
-- **Chosen by**: the user, 2026-10-09 (controller)
+- **Chosen by**: the user, 2026-10-09 (controller); the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later) (D-016b: recommendation of this entry adopted without individual review)
 
 ### Sources
 
@@ -1651,6 +1656,8 @@ individual logins. The domain itself is information from the user.
 - **Decision**: D. No TLS
 - **Rationale**: Simplicity.
 - **Chosen by**: the user, 2026-10-09
+- **Amendment**: the Trino listener for external systems uses a self-signed certificate
+  (D-019 and D-026 adopted on 2026-10-10, to re-evaluate); every other route stays plain HTTP.
 
 ### Sources
 
@@ -1660,7 +1667,7 @@ individual logins. The domain itself is information from the user.
 
 ## D-018 BI tool
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -1757,9 +1764,9 @@ Superset** (open source) rather than a paid Metabase edition. C is a monitoring 
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: A. Metabase open source, mode 1 (one Trino service user), Trino driver through an init container
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -1775,7 +1782,7 @@ Superset** (open source) rather than a paid Metabase edition. C is a monitoring 
 
 ## D-019 Interface for external systems
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -1853,9 +1860,9 @@ system is the option that meets FR-013 over plain HTTP.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: A. Trino directly, one Trino user per external system, self-signed certificate on the Trino listener only (amends D-017)
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -1869,7 +1876,7 @@ system is the option that meets FR-013 over plain HTTP.
 
 ## D-020 Airflow executor
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -1927,9 +1934,9 @@ no broker.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: A. KubernetesExecutor, with remote logging to S3
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -1940,7 +1947,7 @@ no broker.
 
 ## D-021 Delivery of DAGs and the dbt project; dbt execution
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -2029,9 +2036,9 @@ necessary, move to Cosmos (3. watcher or 2. kubernetes) with a manifest.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: DAGs: A. git-sync. dbt: 4. one pod per run (`KubernetesPodOperator` with `dbt build`), dbt-trino image with the project built by GitHub Actions and pushed to GitHub Container Registry
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -2044,7 +2051,7 @@ necessary, move to Cosmos (3. watcher or 2. kubernetes) with a manifest.
 
 ## D-022 Scaling workloads with demand
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -2125,9 +2132,9 @@ stop outside business hours.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: B. Airflow scales Trino workers around the batch; D. fixed replicas for the rest
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -2138,7 +2145,7 @@ stop outside business hours.
 
 ## D-023 Cost visibility
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -2206,9 +2213,9 @@ NAT, NLB and S3.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: D. OpenCost plus AWS cost allocation tags
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -2220,7 +2227,7 @@ NAT, NLB and S3.
 
 ## D-024 Alert channel
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -2288,9 +2295,9 @@ follow one path. The channel itself is information from the user.
 
 ### Decision
 
-- **Decision**: Pending (information from the user: which channel)
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: Alertmanager with one receiver (A. email or B. chat); Airflow failures exported as metrics. The channel is still pending (information from the user)
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -2301,7 +2308,7 @@ follow one path. The channel itself is information from the user.
 
 ## D-025 OpenMetadata search engine
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -2363,9 +2370,9 @@ operator.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: A. OpenSearch 3.x, single node with reduced memory
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
@@ -2379,7 +2386,7 @@ operator.
 
 ## D-026 Enforcement of data access control and sensitive data
 
-**Status**: Pending
+**Status**: Decided (recommendation adopted; to re-evaluate)
 
 ### Context
 
@@ -2464,9 +2471,9 @@ Git.
 
 ### Decision
 
-- **Decision**: Pending
-- **Rationale**: —
-- **Chosen by**: —
+- **Decision**: A. Trino file-based access control with authentication way ii (TLS on Trino only), because D-019 is A
+- **Rationale**: Recommendation of this entry adopted without individual review.
+- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
 
 ### Sources
 
