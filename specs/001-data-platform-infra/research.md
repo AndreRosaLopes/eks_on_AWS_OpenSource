@@ -2500,6 +2500,7 @@ the teardown review.
 | D-029 | Teardown procedure | All steps | Decided: A. One shell script with every teardown action |
 | D-030 | Location of the data bucket in Terraform | Step 0, P1 | Decided: A. Separate persistent root module |
 | D-031 | Automatic validation in CI | All steps | Decided: B. Terraform and YAML checks in GitHub Actions |
+| D-032 | Structure of the Terraform code | Step 0 | Decided: C. Community modules called from the root modules, no local wrappers |
 
 ---
 
@@ -2946,6 +2947,88 @@ credential and no cost.
 - [CRDs-catalog (kubeconform usage)](https://github.com/datreeio/CRDs-catalog)
 - To verify in the implementation: current versions of `kubeconform`, `yamllint` and the Terraform
   setup action; presence of the Envoy Gateway and Gateway API schemas in the CRDs-catalog.
+
+---
+
+## D-032 Structure of the Terraform code
+
+**Status**: Decided
+
+### Context
+
+- The plan listed local modules in `infra/terraform/modules/` (network, eks, node-groups, s3)
+  without saying how they are written.
+- The VPC and the EKS cluster need dozens of resources (subnets, route tables, NAT gateway, cluster,
+  node groups, add-ons, access entries, IAM roles).
+- Constitution III (simplicity), VIII (cloud-specific code confined to Terraform and annotations),
+  X (pinned versions).
+
+### Options
+
+**A. Local modules wrapping community modules** — `modules/network` and `modules/eks` only pass
+inputs to `terraform-aws-modules/vpc/aws` and `terraform-aws-modules/eks/aws`.
+**B. Local modules with own `aws_*` resources** — every resource declared in this repository.
+**C. Community modules called directly from the root modules** — `foundation/` calls
+`terraform-aws-modules/vpc/aws` and `terraform-aws-modules/eks/aws` (node groups, add-ons, access
+entries as inputs) at pinned versions; S3 buckets and the node role policies are plain resources in
+the root modules; no `modules/` folder until a real composition is used in more than one place.
+
+### Trade-offs
+
+| | A. Wrappers | B. Own resources | C. Direct community modules |
+|---|---|---|---|
+| Code to write and review | Small, plus a layer of pass-through variables | Large (hundreds of lines) | Smallest |
+| Module tree depth | Two levels | One level | One level |
+| HashiCorp guidance (no thin wrappers, flat tree) | ❌ thin wrappers | ✅ | ✅ |
+| AWS guidance (prefer maintained registry modules, customize through inputs) | ✅ | ❌ | ✅ |
+| External dependency | Yes (pinned) | None | Yes (pinned) |
+| Major version upgrades | Migration inside the wrapper | Follow AWS and provider changes alone | Migration in the root module (the EKS module had breaking majors, e.g., v20 → v21) |
+| Portability (constitution VIII) | Swap the wrappers | Rewrite the modules | Rewrite the root modules with the AKS/GKE equivalents; workloads unchanged |
+
+### Cost
+
+None; the AWS resources are the same in the three options.
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | `infra/terraform/modules/` is removed from the plan and the README structure | plan.md, README |
+| 2 | Module versions pinned in the root modules and validated by CI | Constitution X, D-031 |
+| 3 | The EKS module creates the node groups, add-ons (VPC CNI, CoreDNS, kube-proxy, EBS CSI) and access entries from inputs | D-001, D-006, D-015 |
+| 4 | Single node role: the module's node IAM role, extended with the S3 and AWS Load Balancer Controller policies in the root module | D-004, D-016b |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Network module | `terraform-aws-modules/vpc/aws` | `Azure/avm-res-network-virtualnetwork` (Azure Verified Modules; to verify) | `terraform-google-modules/network/google` |
+| Cluster module | `terraform-aws-modules/eks/aws` | `Azure/aks/azurerm` or the AKS Azure Verified Module (to verify) | `terraform-google-modules/kubernetes-engine/google` |
+
+### In the reference project
+
+Not checked.
+
+### Recommendation
+
+**C. Community modules called directly from the root modules**: follows the HashiCorp guidance
+(flat tree, no thin wrappers) and the AWS guidance (maintained registry modules customized through
+inputs), with the least code.
+
+### Decision
+
+- **Decision**: C. `terraform-aws-modules/vpc/aws` and `terraform-aws-modules/eks/aws` called
+  directly from `foundation/` at pinned versions; no local modules
+- **Rationale**: Best practice of HashiCorp and AWS; least code.
+- **Chosen by**: the user, 2026-10-10 ("adopt the best practices")
+
+### Sources
+
+- [HashiCorp: Creating Modules](https://developer.hashicorp.com/terraform/language/modules/develop)
+- [HashiCorp: Module Composition](https://developer.hashicorp.com/terraform/language/v1.12.x/modules/develop/composition)
+- [AWS Prescriptive Guidance: community modules](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/community.html)
+- To verify in the implementation: latest versions of both modules (EKS v21.x, AWS provider ≥ 6
+  required) and support for EKS 1.36; Azure and GCP module names.
 
 ---
 

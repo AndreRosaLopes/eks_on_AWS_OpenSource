@@ -6,7 +6,7 @@
 clarifications of 2026-10-10); plan input `prompt/003-infra-plan.md`; decisions in
 [research.md](research.md).
 
-**Status**: Phase 0 and Phase 1 complete. Every technical choice is decided (D-001 to D-031).
+**Status**: Phase 0 and Phase 1 complete. Every technical choice is decided (D-001 to D-032).
 D-016b and D-018 to D-026 were adopted from the recommendations without individual review and are
 marked "to re-evaluate" in `research.md`. Facts marked "to verify" in `research.md` are confirmed
 at implementation (constitution XII).
@@ -21,9 +21,11 @@ charts with minimal values.
 
 ## Technical Context
 
-**Language/Version**: Terraform (HCL) for cloud resources; YAML for Argo CD Applications, Helm
-values and own Kubernetes resources; GitHub Actions workflows build the dbt image (D-021) and
-validate every change (D-031). Every
+**Language/Version**: Terraform (HCL) for cloud resources, with the community modules
+`terraform-aws-modules/vpc` and `terraform-aws-modules/eks` called directly from the root modules
+(D-032); YAML for Argo CD Applications, Helm
+values and own Kubernetes resources; a GitHub Actions workflow validates every change (D-031).
+The DAGs, the dbt project, the dbt image and its workflow belong to the data scope (D-021). Every
 version is pinned at implementation to the newest stable release, verified per constitution XII.
 
 **Primary Dependencies** (decision in parentheses):
@@ -35,8 +37,8 @@ version is pinned at implementation to the newest stable release, verified per c
   provider (D-017, D-028); password file authentication and file-based access control (D-026).
 - P3: Airflow with KubernetesExecutor and remote logging to S3 (D-020); DAGs by git-sync; dbt as
   one pod per run (`KubernetesPodOperator`, `dbt build`) from a dbt-trino image built by GitHub
-  Actions into GitHub Container Registry (D-021); Airflow scales Trino workers around the batch
-  (D-022).
+  Actions into GitHub Container Registry (D-021, data scope); Airflow scales Trino workers around
+  the batch (D-022).
 - P4: Envoy Gateway (D-016) behind one NLB created by the AWS Load Balancer Controller (D-016b);
   Metabase open source with own PostgreSQL and the Trino driver from an init container (D-018);
   external systems use Trino directly, one Trino user each (D-019).
@@ -110,8 +112,8 @@ Git (`.env`, D-011).
 | 0.2 Cluster | EKS 1.36, public + private endpoint, access entries, single node role, core add-ons (VPC CNI, CoreDNS, kube-proxy, EBS CSI), On-Demand base group, Spot group (min 0), Cluster Autoscaler, gp3 StorageClass; `default_tags` for cost allocation (D-023) | quickstart 0.2 |
 | 0.3 GitOps | Validation workflow (D-031); `bootstrap` apply installs Argo CD; root Application reads `infra/platform/argocd/`; every Application carries the cascade deletion finalizer (D-029); `scripts/teardown.sh` validated on the empty platform | quickstart 0.3 |
 | P1 Ingestion | Uses the S3 data bucket from `data/` (D-030); Airbyte storage bucket; Polaris + own PostgreSQL; Airbyte (bundled database, S3 storage, S3 Data Lake destination as Iceberg); sample source PostgreSQL; Secrets from `.env` | quickstart P1 |
-| P2 Processing | Trino (coordinator always on, workers 0 by default) with the Iceberg catalog on Polaris; self-signed TLS (Terraform `tls`, D-028); password file and group file; file-based access control (D-026); dbt-trino image workflow in GitHub Actions → GHCR (D-021) | quickstart P2 |
-| P3 Orchestration | Airflow (KubernetesExecutor, reduced control components per N-001, git-sync, remote logging to an S3 bucket); daily DAG pattern: scale Trino workers up → Airbyte sync → dbt pod → scale workers to zero, finished before 08:00 Brasília time | quickstart P3 |
+| P2 Processing | Trino (coordinator always on, workers 0 by default) with the Iceberg catalog on Polaris; self-signed TLS (Terraform `tls`, D-028); password file and group file; file-based access control (D-026) | quickstart P2 |
+| P3 Orchestration | Airflow (KubernetesExecutor, reduced control components per N-001, git-sync, remote logging to an S3 bucket); Kubernetes permissions for Airflow to scale the Trino workers and start pods. The daily DAG (scale Trino workers up → Airbyte sync → dbt pod → scale workers to zero, before 08:00 Brasília time) belongs to the data scope | quickstart P3 |
 | P4 BI and external systems | AWS Load Balancer Controller; Envoy Gateway with one `Gateway` (one NLB): HTTP listener for Metabase, TCP/TLS passthrough listener for Trino; Metabase + own PostgreSQL; Trino users for BI (one service user) and per external system; contracts in [contracts/](contracts/) | quickstart P4 |
 | P5 Observability | Prometheus, Grafana, Alertmanager (email receiver, SMTP credential from `.env`); Airflow metrics; OpenCost; cost allocation tags activated | quickstart P5 |
 | P6 Governance | OpenSearch 3.x single node; OpenMetadata ≥ 1.12 (bundled database, Kubernetes native orchestrator); connectors to Trino, Airflow, Airbyte; classification of sensitive data mapped by hand to the Trino rules | quickstart P6 |
@@ -152,7 +154,7 @@ bucket (cents) remain billed.
 specs/001-data-platform-infra/
 ├── spec.md
 ├── plan.md              # This file
-├── research.md          # Decisions D-001 to D-031 (Phase 0)
+├── research.md          # Decisions D-001 to D-032 (Phase 0)
 ├── quickstart.md        # Validation per checkpoint (Phase 1)
 ├── contracts/           # BI access and external systems interface (Phase 1)
 ├── checklists/
@@ -167,10 +169,9 @@ scope); the inventory of infrastructure resources is the structure below.
 ```text
 infra/
 ├── terraform/
-│   ├── modules/              # network, eks, node-groups, s3 (cloud-specific layer)
 │   ├── state/                # one-time creation of the state bucket (local state)
 │   ├── data/                 # persistent: S3 data bucket, never destroyed (D-030)
-│   ├── foundation/           # apply 1: VPC, EKS, node groups, core add-ons, node role, tool S3 buckets
+│   ├── foundation/           # apply 1: VPC and EKS modules (node groups, add-ons, node role), tool S3 buckets
 │   └── bootstrap/            # apply 2: Argo CD, root Application, Secrets from .env, Trino TLS
 └── platform/
     ├── argocd/               # one Application per component
@@ -190,7 +191,7 @@ infra/
         ├── opensearch/                # values.yaml
         └── openmetadata/              # values.yaml
 .github/
-└── workflows/                # validation (D-031); dbt-trino image build → GHCR (D-021)
+└── workflows/                # validation (D-031)
 scripts/
 ├── teardown.sh               # ordered teardown without orphan resources (D-029)
 └── verify/                   # acceptance checks per checkpoint

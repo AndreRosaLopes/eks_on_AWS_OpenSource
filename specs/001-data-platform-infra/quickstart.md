@@ -65,20 +65,20 @@ workstation with AWS credentials and `kubectl` configured; the automated version
 | `SHOW TABLES` on the Iceberg catalog | Tables written by P1 are listed |
 | Query with the BI service user on a sensitive column | Value masked or column hidden (D-026) |
 | Query with the BI service user on bronze or silver | Access denied |
-| dbt image workflow run on GitHub Actions | Image for arm64 published to GHCR with a pinned tag |
-| dbt pod (`dbt build`) started by hand against Trino | Medallion layers and star schema tables created |
+| Trino workers scaled to 1 and back to 0 by hand | A worker joins the cluster, then the workers return to 0 and the nodes are removed by the Cluster Autoscaler |
 
 ## P3 Orchestration
 
 | Check | Expected outcome |
 |---|---|
 | Argo CD Application for Airflow | Synced and Healthy; no idle worker pods |
-| A DAG committed to the repository | Appears in Airflow through git-sync without an image build |
-| Daily DAG on schedule | Trino workers scale up, Airbyte sync and dbt pod run, workers return to 0; finished before 08:00 Brasília time |
-| Same DAG triggered on demand | Runs |
-| DAG run for one tumbling window | Processes exactly that window |
-| Task logs after the task pod is gone | Readable in Airflow (remote logging in S3) |
-| Argo CD after the run | Application still Synced (worker replicas ignored) |
+| git-sync sidecar | Running and pointed at the DAG folder of the repository |
+| `kubectl auth can-i` as the Airflow service account | Can scale the Trino workers and create pods in its namespace |
+| Trino workers scaled with the Airflow service account | Scale succeeds; Argo CD Application still Synced (worker replicas ignored, D-022) |
+| Airflow remote logging configuration | Points at the Airflow logs bucket; the node role can write to it |
+
+The DAG checks (schedule, on demand, tumbling window, daily update by 08:00, task logs) and the dbt
+checks belong to the data scope, which owns the DAGs and the dbt project (D-021).
 
 ## P4 BI and external systems
 
@@ -96,7 +96,8 @@ workstation with AWS credentials and `kubectl` configured; the automated version
 | Check | Expected outcome |
 |---|---|
 | Grafana through port-forward | Executions, failures and resource usage per workload visible |
-| A DAG that fails on purpose | Alert email received by the technical team |
+| Alert rule for failed Airflow tasks | Loaded in Prometheus; the email on a failing DAG is checked in the data scope |
+| A test alert sent through Alertmanager | Alert email received by the technical team |
 | A pod in crash loop | Alert email received |
 | OpenCost | Cost per namespace/workload shown |
 | AWS Cost Explorer filtered by the cost allocation tags (next day) | Cost per step visible, including NAT and NLB |

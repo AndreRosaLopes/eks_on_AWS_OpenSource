@@ -35,7 +35,6 @@ The project has a single environment: `dev`.
 │       └── prompts/            # implementation prompts, one per task
 ├── infra/
 │   ├── terraform/
-│   │   ├── modules/            # reusable modules: vpc, eks, iam, s3...
 │   │   ├── foundation/         # apply 1: AWS resources (VPC, EKS, IAM, S3)
 │   │   └── bootstrap/          # apply 2: installs Argo CD in the cluster
 │   └── platform/               # workloads running inside EKS, synced by Argo CD
