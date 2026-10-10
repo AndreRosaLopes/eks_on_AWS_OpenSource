@@ -42,6 +42,8 @@ workstation with AWS credentials and `kubectl` configured; the automated version
 | `kubectl -n argocd port-forward svc/argocd-server 8080:443` | Argo CD UI reachable only through the port-forward |
 | A test Application committed under `infra/platform/argocd/` | Synced and Healthy without manual commands |
 | A manual change to the test Application's resources | Reverted by Argo CD |
+| Pull request with a badly formatted `.tf` file or an invalid YAML manifest | Validation workflow fails (D-031) |
+| Pull request with valid changes | Validation workflow passes, with no cloud credential |
 
 ## P1 Ingestion
 

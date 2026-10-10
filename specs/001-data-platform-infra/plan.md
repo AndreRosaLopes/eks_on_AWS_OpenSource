@@ -6,7 +6,7 @@
 clarifications of 2026-10-10); plan input `prompt/003-infra-plan.md`; decisions in
 [research.md](research.md).
 
-**Status**: Phase 0 and Phase 1 complete. Every technical choice is decided (D-001 to D-030).
+**Status**: Phase 0 and Phase 1 complete. Every technical choice is decided (D-001 to D-031).
 D-016b and D-018 to D-026 were adopted from the recommendations without individual review and are
 marked "to re-evaluate" in `research.md`. Facts marked "to verify" in `research.md` are confirmed
 at implementation (constitution XII).
@@ -22,7 +22,8 @@ charts with minimal values.
 ## Technical Context
 
 **Language/Version**: Terraform (HCL) for cloud resources; YAML for Argo CD Applications, Helm
-values and own Kubernetes resources; a GitHub Actions workflow builds the dbt image (D-021). Every
+values and own Kubernetes resources; GitHub Actions workflows build the dbt image (D-021) and
+validate every change (D-031). Every
 version is pinned at implementation to the newest stable release, verified per constitution XII.
 
 **Primary Dependencies** (decision in parentheses):
@@ -54,6 +55,8 @@ version is pinned at implementation to the newest stable release, verified per c
   FR-018): after a loss, tables are recreated by reloading from the sources.
 
 **Testing**: `terraform fmt`, `terraform validate`, reviewed `terraform plan` (constitution XI);
+a validation workflow on pull requests and pushes to `main` runs `terraform fmt -check`,
+`terraform validate`, `yamllint` and `kubeconform -strict` with no cloud credential (D-031);
 acceptance checks per checkpoint in `scripts/verify/`, described in [quickstart.md](quickstart.md).
 
 **Apply and teardown order**: `state/` (once) → `data/` (once) → `foundation` → `bootstrap`. The
@@ -95,7 +98,7 @@ Git (`.env`, D-011).
 | VIII. Cloud Portability | ⚠️ Justified | AWS Load Balancer Controller is an AWS-only in-cluster component (D-016b); cloud-specific values in Cluster Autoscaler and OpenCost. See Complexity Tracking |
 | IX. Node-Level Cloud Permissions | ✅ Pass | Single node role, extended with S3 (data, Airflow logs) and the AWS Load Balancer Controller policy |
 | X. Pinned Versions | ✅ Pass | Kubernetes 1.36; charts, images and providers pinned at implementation |
-| XI. Verified Changes | ✅ Pass | `fmt`/`validate`/`plan`; `scripts/verify/`; apply and destroy only with approval; `scripts/teardown.sh` asks for confirmation and runs `terraform destroy` interactively (D-029) |
+| XI. Verified Changes | ✅ Pass | `fmt`/`validate`/`plan`; `fmt`/`validate` and YAML checks also in CI (D-031); `scripts/verify/`; apply and destroy only with approval; `scripts/teardown.sh` asks for confirmation and runs `terraform destroy` interactively (D-029) |
 | XII. Verified Decisions | ✅ Pass | Sources per decision in `research.md`; items marked "to verify" confirmed at implementation |
 | XIII. Simple Kubernetes Delivery | ✅ Pass | Upstream charts with minimal values; Metabase has no maintained upstream chart, so it is plain YAML; own resources plain YAML |
 
@@ -105,7 +108,7 @@ Git (`.env`, D-011).
 |---|---|---|
 | 0.1 Network | Persistent `data/` module with the S3 data bucket (D-030); VPC in 2 AZs, public and private subnets (public tagged `kubernetes.io/role/elb`), internet gateway, one zonal NAT gateway, S3 gateway endpoint | [quickstart.md](quickstart.md) 0.1 |
 | 0.2 Cluster | EKS 1.36, public + private endpoint, access entries, single node role, core add-ons (VPC CNI, CoreDNS, kube-proxy, EBS CSI), On-Demand base group, Spot group (min 0), Cluster Autoscaler, gp3 StorageClass; `default_tags` for cost allocation (D-023) | quickstart 0.2 |
-| 0.3 GitOps | `bootstrap` apply installs Argo CD; root Application reads `infra/platform/argocd/`; every Application carries the cascade deletion finalizer (D-029); `scripts/teardown.sh` validated on the empty platform | quickstart 0.3 |
+| 0.3 GitOps | Validation workflow (D-031); `bootstrap` apply installs Argo CD; root Application reads `infra/platform/argocd/`; every Application carries the cascade deletion finalizer (D-029); `scripts/teardown.sh` validated on the empty platform | quickstart 0.3 |
 | P1 Ingestion | Uses the S3 data bucket from `data/` (D-030); Airbyte storage bucket; Polaris + own PostgreSQL; Airbyte (bundled database, S3 storage, S3 Data Lake destination as Iceberg); sample source PostgreSQL; Secrets from `.env` | quickstart P1 |
 | P2 Processing | Trino (coordinator always on, workers 0 by default) with the Iceberg catalog on Polaris; self-signed TLS (Terraform `tls`, D-028); password file and group file; file-based access control (D-026); dbt-trino image workflow in GitHub Actions → GHCR (D-021) | quickstart P2 |
 | P3 Orchestration | Airflow (KubernetesExecutor, reduced control components per N-001, git-sync, remote logging to an S3 bucket); daily DAG pattern: scale Trino workers up → Airbyte sync → dbt pod → scale workers to zero, finished before 08:00 Brasília time | quickstart P3 |
@@ -149,7 +152,7 @@ bucket (cents) remain billed.
 specs/001-data-platform-infra/
 ├── spec.md
 ├── plan.md              # This file
-├── research.md          # Decisions D-001 to D-030 (Phase 0)
+├── research.md          # Decisions D-001 to D-031 (Phase 0)
 ├── quickstart.md        # Validation per checkpoint (Phase 1)
 ├── contracts/           # BI access and external systems interface (Phase 1)
 ├── checklists/
@@ -187,7 +190,7 @@ infra/
         ├── opensearch/                # values.yaml
         └── openmetadata/              # values.yaml
 .github/
-└── workflows/                # dbt-trino image build → GHCR (D-021)
+└── workflows/                # validation (D-031); dbt-trino image build → GHCR (D-021)
 scripts/
 ├── teardown.sh               # ordered teardown without orphan resources (D-029)
 └── verify/                   # acceptance checks per checkpoint

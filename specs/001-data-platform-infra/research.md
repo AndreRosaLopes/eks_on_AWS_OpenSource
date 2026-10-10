@@ -2499,6 +2499,7 @@ the teardown review.
 | D-028 | Self-signed certificate for Trino | P2 (Trino), used in P4 | Decided: A. Terraform `tls` provider |
 | D-029 | Teardown procedure | All steps | Decided: A. One shell script with every teardown action |
 | D-030 | Location of the data bucket in Terraform | Step 0, P1 | Decided: A. Separate persistent root module |
+| D-031 | Automatic validation in CI | All steps | Decided: B. Terraform and YAML checks in GitHub Actions |
 
 ---
 
@@ -2857,6 +2858,94 @@ no manual step, and the tool buckets follow the rule of D-027.
 
 - [Terraform `prevent_destroy`](https://developer.hashicorp.com/terraform/language/meta-arguments/lifecycle)
 - [Terraform S3 backend](https://developer.hashicorp.com/terraform/language/backend/s3)
+
+---
+
+## D-031 Automatic validation in CI
+
+**Status**: Decided
+
+### Context
+
+- Constitution XI: every change passes `terraform fmt`, `terraform validate` and a reviewed
+  `terraform plan`; today these run only on the workstation.
+- Constitution VI: Argo CD applies whatever reaches `main`. An invalid YAML file in
+  `infra/platform/` is found only when the sync fails in the cluster.
+- The only workflow planned so far builds the dbt image (D-021).
+- The repository is public (D-008).
+
+### Options
+
+**A. Terraform only** — a GitHub Actions workflow on pull requests and pushes to `main` runs
+`terraform fmt -check -recursive` and, in each root module, `terraform init -backend=false` and
+`terraform validate`. No cloud credential.
+**B. Terraform and YAML** — A, plus `yamllint` and `kubeconform -strict` on the plain YAML and the
+Argo CD Applications in `infra/platform/`; custom resources (Argo CD `Application`, Gateway API)
+are validated with the schemas of the CRDs-catalog. No cloud credential.
+**C. B plus rendered charts** — each upstream chart is rendered with its values (`helm template`)
+and the result is validated with `kubeconform`; needs a script that reads the chart and version of
+each Application.
+**D. C plus `terraform plan`** — the workflow also plans against the account, with an AWS role
+assumed through GitHub OIDC; the `bootstrap` variables from `.env` would have to be GitHub
+Secrets.
+
+### Trade-offs
+
+| | A. Terraform | B. Terraform + YAML | C. + charts | D. + plan |
+|---|---|---|---|---|
+| Catches Terraform syntax and formatting | ✅ | ✅ | ✅ | ✅ |
+| Catches invalid Kubernetes YAML before Argo CD | ❌ | ✅ own YAML and Applications | ✅ also chart values | ✅ |
+| Cloud credential in CI | None | None | None | IAM role (OIDC) + secrets in GitHub |
+| Extra code | One workflow | One workflow | Workflow + rendering script | Workflow + script + IAM role in Terraform |
+| Simplicity (constitution III) | ✅ | ✅ | ⚠️ | ❌ |
+| No secrets in Git (constitution IV) | ✅ | ✅ | ✅ | ⚠️ secrets move to GitHub |
+
+The reviewed `terraform plan` of constitution XI stays on the workstation in A to C.
+
+### Cost
+
+Free: standard GitHub-hosted runners are free in public repositories. D adds no AWS cost (IAM and
+plan API calls are free).
+
+### Impacts on other steps and decisions
+
+| # | Impact | Related to |
+|---|---|---|
+| 1 | Second workflow in `.github/workflows/`, beside the dbt image build | D-021 |
+| 2 | Tool versions in the workflow (Terraform, `kubeconform`, `yamllint`, CRDs-catalog reference) are pinned | Constitution X |
+| 3 | Branch protection on `main` can require the workflow to pass (GitHub repository setting, outside Terraform) | Constitution VI |
+| 4 | Charts' values are not validated (only by the Argo CD sync) | D-016 to D-025 |
+
+### Equivalents in the other clouds
+
+The checks do not depend on the cloud: the workflow runs on GitHub and reads only the repository.
+Only the Terraform providers validated change (`aws` → `azurerm` / `google`). Option D would use
+AWS IAM OIDC, Azure workload identity federation or GCP Workload Identity Federation.
+
+### In the reference project
+
+No validation workflow; the workflows ran `terraform apply` (with long-lived AWS access keys in
+GitHub Secrets) and built images.
+
+### Recommendation
+
+**B. Terraform and YAML checks**: catches the errors that would otherwise reach Argo CD, with no
+credential and no cost.
+
+### Decision
+
+- **Decision**: B. One GitHub Actions workflow on pull requests and pushes to `main`:
+  `terraform fmt -check`, `terraform validate` per root module, `yamllint` and `kubeconform -strict`
+  with the CRDs-catalog schemas
+- **Rationale**: Errors found before Argo CD syncs; no credential and no cost.
+- **Chosen by**: the user, 2026-10-10
+
+### Sources
+
+- [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions)
+- [CRDs-catalog (kubeconform usage)](https://github.com/datreeio/CRDs-catalog)
+- To verify in the implementation: current versions of `kubeconform`, `yamllint` and the Terraform
+  setup action; presence of the Envoy Gateway and Gateway API schemas in the CRDs-catalog.
 
 ---
 
