@@ -9,6 +9,22 @@
 **Input**: User description: see `prompt/002-infra-specify.md` (infrastructure of the data platform,
 described by functionality: ingestion, processing, orchestration, BI, observability and governance).
 
+## Clarifications
+
+### Session 2026-10-10
+
+- Q: How must the platform be turned on and off? → A: It stays on 24/7; the daily update runs
+  automatically.
+- Q: If the processing environment or a tool's own database is lost, what must be recoverable? → A: The stored data
+  and the catalog of the tables (backed up daily); the state of the other tools is rebuilt by hand
+  or from the repository.
+- Q: How long is raw (bronze) data kept in the repository? → A: All data is kept with no time
+  limit; nothing is deleted.
+- Q: When must the BI be available to business users? → A: Weekdays (Monday to Friday), 08:00
+  to 18:00, Brasília time (America/Sao_Paulo); it may be unavailable outside that window.
+- Q: By what time must the daily data be updated in the BI? → A: By 08:00 Brasília time, with the
+  previous day's data.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Ingestion (Priority: P1)
@@ -150,6 +166,10 @@ the source, check who can access it and whether it has sensitive data.
 - Sensitive data reaches a log or metric: this violates FR-006 and must not happen.
 - The platform is moved to another of the three clouds: functionalities keep working
   (FR-002).
+- A business user accesses the BI outside the availability window (FR-012): the BI may be
+  unavailable; it is available again at the start of the next window.
+- The processing environment is lost: the stored data and the catalog of its tables are recovered
+  from the last daily backup (FR-018); other tool state is rebuilt.
 
 ## Requirements *(mandatory)*
 
@@ -165,13 +185,18 @@ the source, check who can access it and whether it has sensitive data.
   business users in BI and MUST NOT appear in logs or metrics.
 - **FR-007**: The platform MUST extract data from external and internal sources of three types:
   APIs, databases and files.
-- **FR-008**: Extracted data MUST be stored in a repository.
+- **FR-008**: Extracted data MUST be stored in a repository and kept with no time limit, in every
+  medallion layer; no data is deleted by age.
 - **FR-009**: The platform MUST provide computing power to process the data, using the medallion
   architecture and the star schema as reference.
 - **FR-010**: Workloads MUST run on a schedule, on demand and by tumbling windows.
-- **FR-011**: Data MUST be updated daily; streaming is not required.
+- **FR-011**: Data MUST be updated daily, with the previous day's data available by 08:00 Brasília
+  time; streaming is not required. The platform stays on 24/7, so
+  the daily update runs automatically, without anyone turning the platform on.
 - **FR-012**: Up to 10 business users MUST access the BI over the internet, each with an individual
-  login (own accounts, the company login or another login are all acceptable).
+  login (own accounts, the company login or another login are all acceptable). The BI MUST be
+  available on weekdays (Monday to Friday) from 08:00 to 18:00 Brasília time (America/Sao_Paulo);
+  outside that window it MAY be unavailable.
 - **FR-013**: External systems MUST be able to consume the processed data over the internet, each
   identified by its own credential; requests without a valid credential MUST be denied.
 - **FR-014**: The technical team MUST see executions and failures, resource usage and cost.
@@ -180,6 +205,10 @@ the source, check who can access it and whether it has sensitive data.
   of sensitive data.
 - **FR-017**: The platform MUST support growth of the daily data volume from today's 1 GB per day
   up to 1000x (about 1 TB per day) without redesign.
+- **FR-018**: The stored data and the catalog of its tables MUST survive the loss of the processing
+  environment; the catalog MUST be backed up at least daily outside that environment. The state of
+  the other tools (dashboards, run history, metadata catalog) MAY be rebuilt by hand or from the
+  repository.
 
 ### Key Entities
 
@@ -202,7 +231,8 @@ the source, check who can access it and whether it has sensitive data.
 
 - **SC-001**: 100% of the three source types (API, database, file), internal and external, are
   extracted into the repository.
-- **SC-002**: Data available to business users is updated every day.
+- **SC-002**: Every day, by 08:00 Brasília time (America/Sao_Paulo), the data available to
+  business users includes the previous day's data.
 - **SC-003**: When no workload is running, processing cost tends to zero.
 - **SC-004**: The platform handles a daily data volume from 1 GB up to about 1 TB without
   redesign.
