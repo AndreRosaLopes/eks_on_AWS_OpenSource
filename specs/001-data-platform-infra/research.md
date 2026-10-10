@@ -1377,7 +1377,7 @@ return to.
 | D-021 | Delivery of DAGs and the dbt project; dbt execution | P2/P3 | Adopted (to re-evaluate): A. git-sync; dbt: 4. one pod per run (image in GHCR) |
 | D-022 | Scaling workloads with demand (cost tending to zero) | P2–P4 | Adopted (to re-evaluate): B. Airflow scales Trino workers + D. fixed replicas |
 | D-023 | Cost visibility | P5 | Adopted (to re-evaluate): D. OpenCost + AWS cost allocation tags |
-| D-024 | Alert channel | P5 | Adopted (to re-evaluate): Alertmanager (A or B); channel pending (information from the user) |
+| D-024 | Alert channel | P5 | Decided: A. Alertmanager → email |
 | D-025 | OpenMetadata search engine | P6 | Adopted (to re-evaluate): A. OpenSearch 3.x |
 | D-026 | Enforcement of data access control and sensitive data | P4/P6 | Adopted (to re-evaluate): A. Trino file-based access control (authentication way ii) |
 
@@ -2228,7 +2228,7 @@ NAT, NLB and S3.
 
 ## D-024 Alert channel
 
-**Status**: Decided (recommendation adopted; to re-evaluate)
+**Status**: Decided (channel: email; Alertmanager adopted from the recommendation, to re-evaluate)
 
 ### Context
 
@@ -2296,9 +2296,12 @@ follow one path. The channel itself is information from the user.
 
 ### Decision
 
-- **Decision**: Alertmanager with one receiver (A. email or B. chat); Airflow failures exported as metrics. The channel is still pending (information from the user)
-- **Rationale**: Recommendation of this entry adopted without individual review.
-- **Chosen by**: the user, 2026-10-10, by adopting all pending recommendations at once (to re-evaluate later)
+- **Decision**: A. Alertmanager → email (SMTP credential from `.env`, D-011); Airflow failures
+  exported as metrics to Prometheus
+- **Rationale**: Alertmanager with one receiver: the recommendation adopted on 2026-10-10. Email:
+  channel chosen by the user.
+- **Chosen by**: the user, 2026-10-10 (email); Alertmanager and Airflow metrics by adopting the
+  recommendation (to re-evaluate)
 
 ### Sources
 
