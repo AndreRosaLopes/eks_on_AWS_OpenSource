@@ -56,6 +56,9 @@ spec:
                 | sed -n 's/.*"entityVersion":\([0-9]*\).*/\1/p')
               send PUT "$api/management/v1/catalogs/lakehouse" \
                 "{\"currentEntityVersion\":$version,\"properties\":$properties}"
+              # catalog_admin (granted to the root principal) also reads and writes table data.
+              send PUT "$api/management/v1/catalogs/lakehouse/catalog-roles/catalog_admin/grants" \
+                '{"grant":{"type":"catalog","privilege":"CATALOG_MANAGE_CONTENT"}}'
               for ns in bronze silver gold; do
                 post "$api/catalog/v1/lakehouse/namespaces" "{\"namespace\":[\"$ns\"]}"
               done
