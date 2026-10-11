@@ -1,0 +1,93 @@
+# One public entry for the platform (D-016): one NLB created by the AWS Load Balancer Controller
+# (D-016b) with two listeners: HTTP for Metabase (contracts/bi-access.md) and TCP for Trino, whose
+# TLS is not terminated here (contracts/external-systems.md, D-028).
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: platform
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: 1
+        container:
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      envoyService:
+        type: LoadBalancer
+        loadBalancerClass: service.k8s.aws/nlb
+        annotations:
+          service.beta.kubernetes.io/aws-load-balancer-type: external
+          service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+          service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: ip
+          service.beta.kubernetes.io/aws-load-balancer-additional-resource-tags: >-
+            Project=data-platform-dev,Environment=dev,Step=P4
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: platform
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: platform
+    namespace: envoy-gateway-system
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: platform
+  namespace: envoy-gateway-system
+spec:
+  gatewayClassName: platform
+  listeners:
+    - name: bi
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: trino
+      protocol: TCP
+      port: 8443
+      allowedRoutes:
+        namespaces:
+          from: All
+        kinds:
+          - kind: TCPRoute
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: metabase
+  namespace: metabase
+spec:
+  parentRefs:
+    - name: platform
+      namespace: envoy-gateway-system
+      sectionName: bi
+  rules:
+    - backendRefs:
+        - name: metabase
+          port: 3000
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TCPRoute
+metadata:
+  name: trino
+  namespace: trino
+spec:
+  parentRefs:
+    - name: platform
+      namespace: envoy-gateway-system
+      sectionName: trino
+  rules:
+    - backendRefs:
+        - name: trino
+          port: 8443

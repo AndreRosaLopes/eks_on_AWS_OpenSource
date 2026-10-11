@@ -1,0 +1,22 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metabase
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+    targetRevision: main
+    path: infra/platform/apps/metabase/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metabase
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

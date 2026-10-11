@@ -1,0 +1,91 @@
+# Metabase open source (D-018): one replica, always on (D-022); Trino driver downloaded by an
+# init container; the Trino certificate is mounted for the TLS connection (D-028).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metabase
+  namespace: metabase
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metabase
+  template:
+    metadata:
+      labels:
+        app: metabase
+    spec:
+      initContainers:
+        - name: trino-driver
+          image: curlimages/curl:8.22.0
+          env:
+            - name: DRIVER_URL
+              value: https://github.com/starburstdata/metabase-driver/releases/download/6.1.0
+          command:
+            - sh
+            - -c
+            - curl -sSfL -o /plugins/starburst.metabase-driver.jar "$DRIVER_URL/starburst-6.1.0.metabase-driver.jar"
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+      containers:
+        - name: metabase
+          image: metabase/metabase:v0.64.1.5
+          env:
+            - name: MB_DB_TYPE
+              value: postgres
+            - name: MB_DB_HOST
+              value: metabase-postgres
+            - name: MB_DB_PORT
+              value: "5432"
+            - name: MB_DB_DBNAME
+              value: metabase
+            - name: MB_DB_USER
+              value: metabase
+            - name: MB_DB_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: metabase-db
+                  key: password
+            - name: MB_PLUGINS_DIR
+              value: /plugins
+            - name: JAVA_TIMEZONE
+              value: America/Sao_Paulo
+          ports:
+            - name: http
+              containerPort: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1536Mi
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+            - name: trino-ca
+              mountPath: /etc/trino-ca
+              readOnly: true
+      volumes:
+        - name: plugins
+          emptyDir: {}
+        - name: trino-ca
+          secret:
+            secretName: trino-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: metabase
+  namespace: metabase
+spec:
+  selector:
+    app: metabase
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

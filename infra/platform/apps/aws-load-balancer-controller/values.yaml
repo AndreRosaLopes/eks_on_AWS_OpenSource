@@ -1,0 +1,9 @@
+# AWS Load Balancer Controller (D-016b): creates the NLB of the Gateway. Permissions come from the
+# node role (D-004); the VPC is read from the instance metadata.
+clusterName: data-platform-dev
+region: us-east-2
+replicaCount: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi

@@ -1,0 +1,8 @@
+# Envoy Gateway (D-016): installs its CRDs and the Gateway API CRDs (experimental channel, for
+# TCPRoute). The controller runs on the base group.
+deployment:
+  envoyGateway:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
