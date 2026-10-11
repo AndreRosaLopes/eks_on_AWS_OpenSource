@@ -188,13 +188,13 @@ alerts by email (FR-014, FR-015, D-023, D-024).
 **Independent Test**: quickstart P5: Grafana dashboards, test alert email received, OpenCost and
 Cost Explorer by tags, no sensitive values in logs or metrics.
 
-- [ ] T057 [US5] Create `infra/terraform/bootstrap/secrets-observability.tf`: Secrets for the Grafana admin password and the Alertmanager SMTP configuration (namespace `observability`) (D-024)
-- [ ] T058 [US5] Create `infra/platform/apps/observability/values.yaml`: Prometheus/Grafana/Alertmanager chart with small retention and a gp3 volume for Prometheus, Alertmanager with one email receiver from the Secret, alert rules for pods in crash loop, failed Jobs and failed Airflow tasks; Grafana without public Service; then `infra/platform/argocd/observability.yaml`
-- [ ] T059 [US5] Update `infra/platform/apps/airflow/values.yaml` to export Airflow metrics to Prometheus (StatsD exporter and ServiceMonitor) (D-024)
-- [ ] T060 [P] [US5] Create `infra/platform/apps/opencost/values.yaml` (OpenCost chart reading the Prometheus of T058, AWS pricing for `us-east-2`) and `infra/platform/argocd/opencost.yaml` (D-023)
+- [X] T057 [US5] Create `infra/terraform/bootstrap/secrets-observability.tf`: Secrets for the Grafana admin password and the Alertmanager SMTP configuration (namespace `observability`) (D-024)
+- [X] T058 [US5] Create `infra/platform/apps/observability/values.yaml`: Prometheus/Grafana/Alertmanager chart with small retention and a gp3 volume for Prometheus, Alertmanager with one email receiver from the Secret, alert rules for pods in crash loop, failed Jobs and failed Airflow tasks; Grafana without public Service; then `infra/platform/argocd/observability.yaml`
+- [X] T059 [US5] Update `infra/platform/apps/airflow/values.yaml` to export Airflow metrics to Prometheus (StatsD exporter and ServiceMonitor) (D-024)
+- [X] T060 [P] [US5] Create `infra/platform/apps/opencost/values.yaml` (OpenCost chart reading the Prometheus of T058, AWS pricing for `us-east-2`) and `infra/platform/argocd/opencost.yaml` (D-023)
 - [ ] T061 [P] [US5] Create `infra/terraform/foundation/cost-tags.tf` activating the cost allocation tags `Project`, `Environment` and `Step` with `aws_ce_cost_allocation_tag` (D-023)
 - [ ] T062 [US5] Commit and push T057–T061, apply `foundation` and `bootstrap` after the user's approval, and confirm the Applications are Synced and Healthy
-- [ ] T063 [P] [US5] Create `scripts/verify/p5-observability.sh` implementing the checks of quickstart P5 (dashboards reachable by port-forward, test alert through Alertmanager, OpenCost cost per namespace, search of logs and metrics for the sample sensitive values returns nothing)
+- [X] T063 [P] [US5] Create `scripts/verify/p5-observability.sh` implementing the checks of quickstart P5 (dashboards reachable by port-forward, test alert through Alertmanager, OpenCost cost per namespace, search of logs and metrics for the sample sensitive values returns nothing)
 
 **Checkpoint**: US5 complete.
 

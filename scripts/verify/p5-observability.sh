@@ -4,9 +4,11 @@ source "$(dirname "$0")/lib.sh"
 source "$(dirname "$0")/apps.sh"
 require_tools kubectl
 
+# From a short-lived curl pod: the Prometheus and Grafana images have no HTTP client, and the
+# control plane cannot reach port 9090 for the API server proxy.
 prometheus_api() {
-  kubectl -n observability exec sts/prometheus-kps-prometheus -c prometheus -- \
-    wget -qO- "http://localhost:9090/api/v1/$1"
+  kubectl -n observability run "prometheus-query-$RANDOM" --rm -i --quiet --restart=Never \
+    --image=curlimages/curl:8.22.0 -- -s "http://kps-prometheus:9090/api/v1/$1"
 }
 
 targets_answer() {
