@@ -4,7 +4,21 @@ executor: KubernetesExecutor
 
 apiSecretKeySecretName: airflow-api-secret
 
+# Helm hooks become Argo CD PostSync hooks, which wait for a Healthy app while the components wait
+# for the migrations; run both jobs as Argo CD Sync hooks instead (Airflow chart docs for Argo CD).
+migrateDatabaseJob:
+  useHelmHooks: false
+  applyCustomEnv: false
+  jobAnnotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+
 createUserJob:
+  useHelmHooks: false
+  applyCustomEnv: false
+  jobAnnotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
   args:
     - bash
     - -c
