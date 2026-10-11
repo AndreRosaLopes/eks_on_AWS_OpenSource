@@ -1,0 +1,78 @@
+# Airflow (P3): KubernetesExecutor with task pods on the Spot group, remote logs in S3 (D-020),
+# DAGs by git-sync (D-021), reduced control components (N-001). UI only through port-forward.
+executor: KubernetesExecutor
+
+apiSecretKeySecretName: airflow-api-secret
+
+createUserJob:
+  args:
+    - bash
+    - -c
+    - >-
+      exec airflow users create -r Admin -u admin -e admin@example.com -f admin -l user
+      -p "$ADMIN_PASSWORD"
+  env:
+    - name: ADMIN_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: airflow-admin
+          key: password
+
+# Task pods (pod template) run on the Spot group.
+workers:
+  nodeSelector:
+    capacity: spot
+  tolerations:
+    - key: capacity
+      operator: Equal
+      value: spot
+      effect: NoSchedule
+
+triggerer:
+  enabled: false
+
+dags:
+  gitSync:
+    enabled: true
+    repo: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+    branch: main
+    rev: HEAD
+    ref: main
+    subPath: data-engineering/dags
+    period: 60s
+
+# Remote logging to the Airflow logs bucket through the node role (D-020).
+env:
+  - name: AIRFLOW_CONN_AWS_DEFAULT
+    value: aws://?region_name=us-east-2
+
+config:
+  core:
+    load_examples: "False"
+  api:
+    workers: 1
+  dag_processor:
+    parsing_processes: 1
+    refresh_interval: 300
+  logging:
+    remote_logging: "True"
+    remote_base_log_folder: s3://data-platform-dev-airflow-logs-283429977024/logs
+    remote_log_conn_id: aws_default
+
+scheduler:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+
+apiServer:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 768Mi
+
+dagProcessor:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi

@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: airflow
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://airflow.apache.org
+      chart: airflow
+      targetRevision: 1.22.0
+      helm:
+        valueFiles:
+          - $values/infra/platform/apps/airflow/values.yaml
+    - repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+      targetRevision: main
+      path: infra/platform/apps/airflow/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: airflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

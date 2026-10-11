@@ -1,0 +1,29 @@
+# Lets the Airflow task pods scale the Trino workers around the batches (D-022).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: airflow-trino-scaler
+  namespace: trino
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [trino-worker]
+    verbs: [get, patch, update]
+  - apiGroups: [apps]
+    resources: [deployments/scale]
+    resourceNames: [trino-worker]
+    verbs: [get, patch, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: airflow-trino-scaler
+  namespace: trino
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: airflow-trino-scaler
+subjects:
+  - kind: ServiceAccount
+    name: airflow-worker
+    namespace: airflow
