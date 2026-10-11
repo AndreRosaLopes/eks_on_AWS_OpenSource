@@ -1,0 +1,260 @@
+# MovieLens sample data loaded at the first start of the sample source (D-013).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sample-source-initdb
+  namespace: sample-source
+data:
+  01-movielens-schema.sql: |
+    -- Movielens sample data schema
+    -- To be loaded into sample-source-postgres
+
+    CREATE TABLE IF NOT EXISTS movies (
+        movieid INTEGER PRIMARY KEY,
+        title VARCHAR(500) NOT NULL,
+        genres VARCHAR(500)
+    );
+
+    CREATE TABLE IF NOT EXISTS links (
+        movieid INTEGER PRIMARY KEY REFERENCES movies(movieid),
+        imdbid INTEGER,
+        tmdbid INTEGER
+    );
+
+    CREATE TABLE IF NOT EXISTS ratings (
+        userid INTEGER NOT NULL,
+        movieid INTEGER NOT NULL REFERENCES movies(movieid),
+        rating DECIMAL(2,1) NOT NULL,
+        timestamp BIGINT NOT NULL,
+        PRIMARY KEY (userid, movieid, timestamp)
+    );
+
+    CREATE TABLE IF NOT EXISTS tags (
+        userid INTEGER NOT NULL,
+        movieid INTEGER NOT NULL REFERENCES movies(movieid),
+        tag VARCHAR(500) NOT NULL,
+        timestamp BIGINT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ratings_movieid ON ratings(movieid);
+    CREATE INDEX IF NOT EXISTS idx_ratings_userid ON ratings(userid);
+    CREATE INDEX IF NOT EXISTS idx_tags_movieid ON tags(movieid);
+    CREATE INDEX IF NOT EXISTS idx_tags_userid ON tags(userid);
+  02-movielens-data.sql: |
+    -- Movielens sample data (subset for testing)
+
+    -- Movies
+    INSERT INTO movies (movieid, title, genres) VALUES
+    (1, 'Toy Story (1995)', 'Adventure|Animation|Children|Comedy|Fantasy'),
+    (2, 'Jumanji (1995)', 'Adventure|Children|Fantasy'),
+    (3, 'Grumpier Old Men (1995)', 'Comedy|Romance'),
+    (4, 'Waiting to Exhale (1995)', 'Comedy|Drama|Romance'),
+    (5, 'Father of the Bride Part II (1995)', 'Comedy'),
+    (6, 'Heat (1995)', 'Action|Crime|Thriller'),
+    (7, 'Sabrina (1995)', 'Comedy|Romance'),
+    (8, 'Tom and Huck (1995)', 'Adventure|Children'),
+    (9, 'Sudden Death (1995)', 'Action'),
+    (10, 'GoldenEye (1995)', 'Action|Adventure|Thriller'),
+    (11, 'American President, The (1995)', 'Comedy|Drama|Romance'),
+    (12, 'Dracula: Dead and Loving It (1995)', 'Comedy|Horror'),
+    (13, 'Balto (1995)', 'Adventure|Animation|Children'),
+    (14, 'Nixon (1995)', 'Drama'),
+    (15, 'Cutthroat Island (1995)', 'Action|Adventure|Romance'),
+    (16, 'Casino (1995)', 'Crime|Drama'),
+    (17, 'Sense and Sensibility (1995)', 'Drama|Romance'),
+    (18, 'Four Rooms (1995)', 'Comedy'),
+    (19, 'Ace Ventura: When Nature Calls (1995)', 'Comedy'),
+    (20, 'Money Train (1995)', 'Action|Comedy|Crime|Drama|Thriller'),
+    (21, 'Get Shorty (1995)', 'Comedy|Crime|Thriller'),
+    (22, 'Copycat (1995)', 'Crime|Drama|Horror|Mystery|Thriller'),
+    (23, 'Assassins (1995)', 'Action|Crime|Thriller'),
+    (24, 'Powder (1995)', 'Drama|Sci-Fi'),
+    (25, 'Leaving Las Vegas (1995)', 'Drama|Romance'),
+    (26, 'Othello (1995)', 'Drama'),
+    (27, 'Now and Then (1995)', 'Children|Drama'),
+    (28, 'Persuasion (1995)', 'Drama|Romance'),
+    (29, 'City of Lost Children, The (1995)', 'Adventure|Drama|Fantasy|Mystery|Sci-Fi'),
+    (30, 'Shanghai Triad (1995)', 'Crime|Drama'),
+    (31, 'Dangerous Minds (1995)', 'Drama'),
+    (32, 'Twelve Monkeys (1995)', 'Mystery|Sci-Fi|Thriller'),
+    (33, 'Wings of Courage (1995)', 'Adventure|Romance|IMAX'),
+    (34, 'Babe (1995)', 'Children|Drama'),
+    (35, 'Carrington (1995)', 'Drama|Romance'),
+    (36, 'Dead Man Walking (1995)', 'Crime|Drama'),
+    (37, 'Across the Sea of Time (1995)', 'Documentary|IMAX'),
+    (38, 'It Takes Two (1995)', 'Children|Comedy'),
+    (39, 'Clueless (1995)', 'Comedy|Romance'),
+    (40, 'Cry, the Beloved Country (1995)', 'Drama'),
+    (41, 'Richard III (1995)', 'Drama|War'),
+    (42, 'Dead Presidents (1995)', 'Action|Crime|Drama'),
+    (43, 'Restoration (1995)', 'Drama'),
+    (44, 'Mortal Kombat (1995)', 'Action|Adventure|Fantasy'),
+    (45, 'To Die For (1995)', 'Comedy|Drama|Thriller'),
+    (46, 'How to Make an American Quilt (1995)', 'Drama|Romance'),
+    (47, 'Seven (1995)', 'Mystery|Thriller'),
+    (48, 'Pocahontas (1995)', 'Animation|Children|Drama|Musical|Romance'),
+    (49, 'When Night Is Falling (1995)', 'Drama|Romance'),
+    (50, 'Usual Suspects, The (1995)', 'Crime|Mystery|Thriller')
+    ON CONFLICT (movieid) DO NOTHING;
+
+    -- Links
+    INSERT INTO links (movieid, imdbid, tmdbid) VALUES
+    (1, 114709, 862),
+    (2, 113497, 8844),
+    (3, 113228, 15602),
+    (4, 114885, 31357),
+    (5, 113041, 11862),
+    (6, 113277, 949),
+    (7, 114319, 11860),
+    (8, 112302, 45325),
+    (9, 114576, 9091),
+    (10, 113189, 710),
+    (11, 112346, 9087),
+    (12, 112896, 12110),
+    (13, 112453, 21032),
+    (14, 113987, 10858),
+    (15, 112760, 10907),
+    (16, 112641, 524),
+    (17, 114388, 4584),
+    (18, 113101, 5),
+    (19, 112281, 9273),
+    (20, 113845, 11517),
+    (21, 113161, 8012),
+    (22, 112722, 9296),
+    (23, 112401, 9691),
+    (24, 114168, 10276),
+    (25, 113627, 17979),
+    (26, 114057, 25890),
+    (27, 114011, 9614),
+    (28, 114117, 12585),
+    (29, 112682, 902),
+    (30, 112126, 22632),
+    (31, 112790, 9571),
+    (32, 114746, 63),
+    (33, 113576, 42251),
+    (34, 112431, 9598),
+    (35, 112637, 29405),
+    (36, 112573, 1369),
+    (37, 114086, 107022),
+    (38, 112756, 29330),
+    (39, 112697, 9603),
+    (40, 112679, 33305),
+    (41, 114279, 27430),
+    (42, 112819, 10617),
+    (43, 114272, 14291),
+    (44, 113855, 9312),
+    (45, 114681, 1992),
+    (46, 113362, 10803),
+    (47, 114369, 807),
+    (48, 114148, 10530),
+    (49, 114916, 50363),
+    (50, 114814, 629)
+    ON CONFLICT (movieid) DO NOTHING;
+
+    -- Ratings (sample)
+    INSERT INTO ratings (userid, movieid, rating, timestamp) VALUES
+    (1, 1, 4.0, 964982703),
+    (1, 3, 4.0, 964981247),
+    (1, 6, 4.0, 964982224),
+    (1, 47, 5.0, 964983815),
+    (1, 50, 5.0, 964982931),
+    (2, 1, 3.5, 1094785734),
+    (2, 10, 4.0, 1094785691),
+    (2, 32, 5.0, 1094785763),
+    (2, 47, 4.5, 1094785734),
+    (3, 1, 4.0, 1278097885),
+    (3, 2, 4.0, 1278097878),
+    (3, 6, 3.0, 1278097878),
+    (3, 16, 4.5, 1278097878),
+    (3, 25, 4.0, 1278097878),
+    (3, 32, 5.0, 1278097878),
+    (3, 47, 5.0, 1278097878),
+    (3, 50, 5.0, 1278097878),
+    (4, 1, 3.0, 1112484820),
+    (4, 10, 4.0, 1112484676),
+    (4, 21, 3.5, 1112484767),
+    (4, 34, 4.0, 1112484580),
+    (4, 39, 3.0, 1112484767),
+    (4, 47, 4.0, 1112484676),
+    (5, 1, 4.0, 1163374405),
+    (5, 2, 3.5, 1163374400),
+    (5, 6, 4.0, 1163374269),
+    (5, 10, 4.0, 1163374390),
+    (5, 16, 3.0, 1163374390),
+    (5, 21, 4.0, 1163374269),
+    (5, 32, 4.5, 1163374405),
+    (5, 39, 3.5, 1163374390),
+    (5, 44, 2.5, 1163374390),
+    (5, 47, 5.0, 1163374152),
+    (5, 50, 5.0, 1163374102),
+    (6, 1, 5.0, 1459209986),
+    (6, 2, 4.0, 1459209800),
+    (6, 3, 3.0, 1459209845),
+    (6, 6, 4.0, 1459209700),
+    (6, 7, 3.5, 1459210120),
+    (6, 10, 4.0, 1459209700),
+    (6, 21, 4.0, 1459210100),
+    (6, 32, 5.0, 1459209653),
+    (6, 47, 5.0, 1459209653),
+    (6, 50, 5.0, 1459209653),
+    (7, 1, 4.5, 1143161888),
+    (7, 6, 3.5, 1143161888),
+    (7, 10, 3.5, 1143161888),
+    (7, 32, 4.0, 1143161888),
+    (7, 47, 4.5, 1143161796),
+    (7, 50, 4.5, 1143161796),
+    (8, 1, 4.0, 1237738764),
+    (8, 2, 3.0, 1237738735),
+    (8, 6, 4.5, 1237738735),
+    (8, 10, 4.0, 1237738764),
+    (8, 16, 4.0, 1237738735),
+    (8, 32, 4.5, 1237738764),
+    (8, 47, 5.0, 1237738670),
+    (8, 50, 5.0, 1237738670),
+    (9, 1, 3.5, 1171921310),
+    (9, 6, 4.0, 1171921127),
+    (9, 10, 3.5, 1171921310),
+    (9, 21, 4.0, 1171921127),
+    (9, 32, 4.0, 1171921127),
+    (9, 47, 4.5, 1171921127),
+    (9, 50, 4.5, 1171921077),
+    (10, 1, 4.0, 1455051455),
+    (10, 2, 3.5, 1455051455),
+    (10, 6, 4.0, 1455051400),
+    (10, 10, 4.0, 1455051400),
+    (10, 16, 3.5, 1455051455),
+    (10, 21, 4.0, 1455051400),
+    (10, 32, 5.0, 1455051350),
+    (10, 47, 5.0, 1455051350),
+    (10, 50, 5.0, 1455051350)
+    ON CONFLICT (userid, movieid, timestamp) DO NOTHING;
+
+    -- Tags (sample)
+    INSERT INTO tags (userid, movieid, tag, timestamp) VALUES
+    (1, 1, 'pixar', 1424380312),
+    (1, 1, 'fun', 1424380312),
+    (1, 47, 'dark', 1424380312),
+    (1, 47, 'Brad Pitt', 1424380312),
+    (1, 50, 'twist ending', 1424380312),
+    (1, 50, 'great acting', 1424380312),
+    (2, 1, 'animation', 1094785734),
+    (2, 1, 'classic', 1094785734),
+    (2, 32, 'time travel', 1094785763),
+    (2, 32, 'mind-bending', 1094785763),
+    (3, 6, 'Robert De Niro', 1278097885),
+    (3, 6, 'Al Pacino', 1278097885),
+    (3, 6, 'heist', 1278097885),
+    (3, 16, 'Scorsese', 1278097885),
+    (3, 16, 'crime', 1278097885),
+    (3, 50, 'crime', 1278097885),
+    (3, 50, 'Kevin Spacey', 1278097885),
+    (4, 1, 'funny', 1112484820),
+    (4, 1, 'Disney', 1112484820),
+    (4, 34, 'talking animals', 1112484580),
+    (4, 34, 'heartwarming', 1112484580),
+    (5, 6, 'great movie', 1163374269),
+    (5, 32, 'Bruce Willis', 1163374405),
+    (5, 47, 'serial killer', 1163374152),
+    (5, 47, 'Morgan Freeman', 1163374152),
+    (5, 50, 'best movie ever', 1163374102)
+    ON CONFLICT DO NOTHING;

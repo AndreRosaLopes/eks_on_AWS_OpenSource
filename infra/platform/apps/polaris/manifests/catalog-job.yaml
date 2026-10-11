@@ -1,0 +1,52 @@
+# Creates the Iceberg catalog on the data bucket and the medallion namespaces (D-012, D-030).
+# S3 access uses the node role; Polaris vends no credentials (stsUnavailable). Idempotent: an
+# existing catalog or namespace answers 409 and is skipped.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: polaris-catalog
+  namespace: polaris
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 6
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: catalog
+          image: curlimages/curl:8.22.0
+          env:
+            - name: CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: polaris-root
+                  key: clientSecret
+            - name: BUCKET
+              value: data-platform-dev-data-283429977024
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              api=http://polaris.polaris.svc:8181/api
+              token=$(curl -sf "$api/catalog/v1/oauth/tokens" \
+                -d grant_type=client_credentials -d client_id=root \
+                -d "client_secret=$CLIENT_SECRET" -d scope=PRINCIPAL_ROLE:ALL \
+                | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+              [ -n "$token" ]
+              post() {
+                code=$(curl -s -o /tmp/out -w '%{http_code}' -X POST "$1" \
+                  -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$2")
+                echo "$1 -> $code"
+                case "$code" in 2*|409) ;; *) cat /tmp/out; exit 1 ;; esac
+              }
+              post "$api/management/v1/catalogs" "{\"catalog\":{\"name\":\"lakehouse\",\"type\":\"INTERNAL\",
+                \"properties\":{\"default-base-location\":\"s3://$BUCKET/lakehouse\"},
+                \"storageConfigInfo\":{\"storageType\":\"S3\",\"allowedLocations\":[\"s3://$BUCKET/\"],
+                \"region\":\"us-east-2\",\"stsUnavailable\":true}}}"
+              for ns in bronze silver gold; do
+                post "$api/catalog/v1/lakehouse/namespaces" "{\"namespace\":[\"$ns\"]}"
+              done

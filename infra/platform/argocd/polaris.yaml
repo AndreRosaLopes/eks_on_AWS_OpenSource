@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: polaris
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://downloads.apache.org/polaris/helm-chart
+      chart: polaris
+      targetRevision: 1.8.0
+      helm:
+        valueFiles:
+          - $values/infra/platform/apps/polaris/values.yaml
+    - repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+      targetRevision: main
+      ref: values
+    - repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+      targetRevision: main
+      path: infra/platform/apps/polaris/manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: polaris
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

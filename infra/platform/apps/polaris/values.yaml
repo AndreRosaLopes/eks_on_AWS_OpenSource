@@ -1,0 +1,23 @@
+# Apache Polaris: Iceberg REST catalog (D-012) on its own PostgreSQL (D-014).
+persistence:
+  type: relational-jdbc
+  relationalJdbc:
+    secret:
+      name: polaris-db
+
+realmContext:
+  realms:
+    - POLARIS
+
+# S3 access through the node role (D-004): no storage credentials in a Secret.
+extraEnv:
+  - name: AWS_REGION
+    value: us-east-2
+
+service:
+  type: ClusterIP
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi

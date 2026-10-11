@@ -1,0 +1,28 @@
+# Airbyte (P1): bundled database (D-010), storage on the Airbyte bucket through the node role,
+# sync jobs on the Spot group. UI only through kubectl port-forward (FR-004).
+global:
+  storage:
+    type: s3
+    bucket:
+      log: data-platform-dev-airbyte-283429977024
+      state: data-platform-dev-airbyte-283429977024
+      workloadOutput: data-platform-dev-airbyte-283429977024
+      activityPayload: data-platform-dev-airbyte-283429977024
+      auditLogging: data-platform-dev-airbyte-283429977024
+    s3:
+      region: us-east-2
+      authenticationType: instanceProfile
+
+  workloads:
+    namespace: airbyte
+
+  jobs:
+    kube:
+      namespace: airbyte
+      nodeSelector:
+        capacity: spot
+      tolerations:
+        - key: capacity
+          operator: Equal
+          value: "spot"
+          effect: NoSchedule
