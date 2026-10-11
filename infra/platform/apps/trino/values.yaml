@@ -3,7 +3,9 @@
 # batches, on the Spot group, scaled by Airflow (D-022); the coordinator also runs queries so the
 # BI works with 0 workers.
 server:
-  workers: 0
+  # The chart creates the worker Deployment only when workers > 0. Argo CD ignores its replicas
+  # (D-022): after the first sync the workers are scaled to 0 and then only Airflow changes them.
+  workers: 1
   config:
     https:
       enabled: true
