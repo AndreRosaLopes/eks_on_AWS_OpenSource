@@ -37,7 +37,7 @@ variable "node_ami_release_version" {
 variable "data_bucket_name" {
   description = "Bucket of the platform data, created by the data root module (D-030)."
   type        = string
-  default     = "data-platform-dev-data-499799893349"
+  default     = "data-platform-dev-data-283429977024"
 }
 
 variable "admin_principal_arns" {
