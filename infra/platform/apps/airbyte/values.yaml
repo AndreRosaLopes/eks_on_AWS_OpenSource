@@ -15,6 +15,24 @@ global:
 
   workloads:
     namespace: airbyte
+    # Connector defaults request 1 CPU per container (3 per sync pod), more than one m7g.large node
+    # (1.93 CPU allocatable) holds; smaller requests let a sync pod fit on one Spot node.
+    resources:
+      useConnectorResourceDefaults: false
+      mainContainer:
+        cpu:
+          request: 250m
+          limit: "1"
+        memory:
+          request: 1Gi
+          limit: 2Gi
+      replication:
+        cpu:
+          request: 250m
+          limit: "1"
+        memory:
+          request: 1Gi
+          limit: 2Gi
 
   jobs:
     kube:
