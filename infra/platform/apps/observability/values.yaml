@@ -1,0 +1,57 @@
+# Prometheus, Grafana and Alertmanager (P5, D-024). UIs only through kubectl port-forward.
+# The Alertmanager configuration (email receiver with the SMTP credential) is a Secret created by
+# the bootstrap apply from .env (D-011).
+# Short resource names: kps-prometheus, kps-alertmanager.
+fullnameOverride: kps
+
+alertmanager:
+  alertmanagerSpec:
+    configSecret: alertmanager-config
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+
+grafana:
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    # Select every ServiceMonitor and PrometheusRule of the cluster (Airflow, Trino, OpenCost).
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests:
+        cpu: 200m
+        memory: 1536Mi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: [ReadWriteOnce]
+          resources:
+            requests:
+              storage: 20Gi
+
+prometheus-node-exporter:
+  tolerations:
+    - operator: Exists
+
+# Control plane components are managed by EKS and not reachable for scraping.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false

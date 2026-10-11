@@ -1,0 +1,17 @@
+# OpenCost (P5, D-023): cost per namespace and workload from the Prometheus of observability, with
+# AWS On-Demand list prices. UI only through kubectl port-forward.
+opencost:
+  exporter:
+    defaultClusterId: data-platform-dev
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+  prometheus:
+    internal:
+      enabled: true
+      serviceName: kps-prometheus
+      namespaceName: observability
+      port: 9090
+  ui:
+    enabled: true
