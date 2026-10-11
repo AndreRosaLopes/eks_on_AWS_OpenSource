@@ -149,11 +149,11 @@ workers (FR-010, D-020, D-022).
 **Independent Test**: quickstart P3: Airflow healthy without idle workers, git-sync running, the
 Airflow service account can scale the Trino workers, remote logging configured.
 
-- [ ] T044 [US3] Create `infra/terraform/bootstrap/secrets-airflow.tf`: Secrets for the Airflow API server secret key and admin password (namespace `airflow`)
-- [ ] T045 [US3] Create `infra/platform/apps/airflow/values.yaml`: official Airflow chart, `KubernetesExecutor` with task pods on the Spot group, bundled PostgreSQL (D-010), reduced control components per N-001 (triggerer disabled, API server workers 1–2, one DAG processor process), git-sync from this repository branch `main`, path of the DAG folder set by the data scope (default `data-engineering/dags`, README), remote logging to the Airflow logs bucket through the node role, no public Service; then `infra/platform/argocd/airflow.yaml`
-- [ ] T046 [P] [US3] Create `infra/platform/apps/airflow/manifests/trino-scaler-rbac.yaml`: Role in namespace `trino` allowing `get`, `patch` and `update` on `deployments/scale` and `deployments` of the Trino workers, and a RoleBinding to the Airflow task pod service account (D-022)
-- [ ] T047 [US3] Commit and push T044–T046, apply `bootstrap` after the user's approval, and confirm the Airflow Application is Synced and Healthy
-- [ ] T048 [P] [US3] Create `scripts/verify/p3-orchestration.sh` implementing the checks of quickstart P3 (no idle workers, git-sync running, `kubectl auth can-i` as the Airflow service account, scale with that account keeps the Trino Application Synced, remote logging configuration)
+- [X] T044 [US3] Create `infra/terraform/bootstrap/secrets-airflow.tf`: Secrets for the Airflow API server secret key and admin password (namespace `airflow`)
+- [X] T045 [US3] Create `infra/platform/apps/airflow/values.yaml`: official Airflow chart, `KubernetesExecutor` with task pods on the Spot group, bundled PostgreSQL (D-010), reduced control components per N-001 (triggerer disabled, API server workers 1–2, one DAG processor process), git-sync from this repository branch `main`, path of the DAG folder set by the data scope (default `data-engineering/dags`, README), remote logging to the Airflow logs bucket through the node role, no public Service; then `infra/platform/argocd/airflow.yaml`
+- [X] T046 [P] [US3] Create `infra/platform/apps/airflow/manifests/trino-scaler-rbac.yaml`: Role in namespace `trino` allowing `get`, `patch` and `update` on `deployments/scale` and `deployments` of the Trino workers, and a RoleBinding to the Airflow task pod service account (D-022)
+- [X] T047 [US3] Commit and push T044–T046, apply `bootstrap` after the user's approval, and confirm the Airflow Application is Synced and Healthy
+- [X] T048 [P] [US3] Create `scripts/verify/p3-orchestration.sh` implementing the checks of quickstart P3 (no idle workers, git-sync running, `kubectl auth can-i` as the Airflow service account, scale with that account keeps the Trino Application Synced, remote logging configuration)
 
 **Checkpoint**: US3 infrastructure complete; DAG checks belong to the data scope.
 
