@@ -1,0 +1,36 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: trino
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://trinodb.github.io/charts
+      chart: trino
+      targetRevision: 1.42.2
+      helm:
+        valueFiles:
+          - $values/infra/platform/apps/trino/values.yaml
+    - repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: trino
+  # Worker replicas are changed by Airflow around the batches (D-022).
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: trino-worker
+      jsonPointers:
+        - /spec/replicas
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - RespectIgnoreDifferences=true

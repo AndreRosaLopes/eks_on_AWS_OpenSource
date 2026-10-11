@@ -1,0 +1,109 @@
+# Trino (P2): HTTPS with the self-signed certificate (D-028), password file authentication and
+# file-based access control (D-026), Iceberg catalog on Polaris (D-012). Workers run only during
+# batches, on the Spot group, scaled by Airflow (D-022); the coordinator also runs queries so the
+# BI works with 0 workers.
+server:
+  workers: 0
+  config:
+    https:
+      enabled: true
+      port: 8443
+      keystore:
+        path: /etc/trino/tls/trino.pem
+    authenticationType: PASSWORD
+    query:
+      maxMemory: "4GB"
+  coordinatorExtraConfig: |
+    node-scheduler.include-coordinator=true
+    internal-communication.shared-secret=${ENV:TRINO_SHARED_SECRET}
+  workerExtraConfig: |
+    internal-communication.shared-secret=${ENV:TRINO_SHARED_SECRET}
+
+# Users and groups come from Secrets created by the bootstrap apply (D-011, D-026):
+# groups technical_team (admin), bi (metabase) and external (one user per external system).
+auth:
+  passwordAuthSecret: trino-password-file
+  groupsAuthSecret: trino-groups
+  refreshPeriod: 60s
+
+accessControl:
+  type: configmap
+  refreshPeriod: 60s
+  configFile: rules.json
+  rules:
+    rules.json: |-
+      {
+        "catalogs": [
+          {"group": "technical_team", "catalog": ".*", "allow": "all"},
+          {"group": "bi", "catalog": "iceberg", "allow": "read-only"},
+          {"group": "external", "catalog": "iceberg", "allow": "read-only"},
+          {"catalog": "system", "allow": "read-only"},
+          {"allow": "none"}
+        ],
+        "schemas": [
+          {"group": "technical_team", "schema": ".*", "owner": true},
+          {"group": "bi|external", "catalog": "iceberg", "schema": "gold", "owner": false}
+        ],
+        "tables": [
+          {"group": "technical_team", "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]},
+          {"group": "bi|external", "catalog": "iceberg", "schema": "gold", "privileges": ["SELECT"]},
+          {"catalog": "system", "privileges": ["SELECT"]}
+        ]
+      }
+
+catalogs:
+  iceberg: |
+    connector.name=iceberg
+    iceberg.catalog.type=rest
+    iceberg.rest-catalog.uri=http://polaris.polaris.svc:8181/api/catalog
+    iceberg.rest-catalog.warehouse=lakehouse
+    iceberg.rest-catalog.security=OAUTH2
+    iceberg.rest-catalog.oauth2.credential=root:${ENV:POLARIS_CLIENT_SECRET}
+    iceberg.rest-catalog.oauth2.scope=PRINCIPAL_ROLE:ALL
+    iceberg.rest-catalog.vended-credentials-enabled=false
+    fs.native-s3.enabled=true
+    s3.region=us-east-2
+
+env:
+  - name: TRINO_SHARED_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: trino-shared-secret
+        key: secret
+  - name: POLARIS_CLIENT_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: trino-polaris
+        key: clientSecret
+
+secretMounts:
+  - name: trino-tls
+    secretName: trino-tls
+    path: /etc/trino/tls
+
+coordinator:
+  jvm:
+    maxHeapSize: "2G"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 3Gi
+
+worker:
+  jvm:
+    maxHeapSize: "4G"
+  resources:
+    requests:
+      cpu: 1
+      memory: 5Gi
+  gracefulShutdown:
+    enabled: true
+    gracePeriodSeconds: 120
+  terminationGracePeriodSeconds: 300
+  nodeSelector:
+    capacity: spot
+  tolerations:
+    - key: capacity
+      operator: Equal
+      value: spot
+      effect: NoSchedule
