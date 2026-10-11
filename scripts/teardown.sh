@@ -30,6 +30,11 @@ for tool in aws kubectl terraform; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Missing tool: $tool" >&2; exit 2; }
 done
 
+# The AWS CLI on Windows ends text output with CRLF; strip the CR so comparisons work in Git Bash.
+aws() {
+  command aws "$@" | tr -d '\r'
+}
+
 # Secrets are required as variables by the bootstrap root module, also on destroy (D-011).
 if [ -f "$REPO_ROOT/.env" ]; then
   set -a

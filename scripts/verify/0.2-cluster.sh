@@ -64,12 +64,18 @@ YAML
 
 autoscaler_adds_node() {
   local before
+  local waited=0
   before="$(kubectl get nodes --no-headers | wc -l)"
+  # Requests are set at creation so no pod starts before the scale-up.
   kubectl -n "$NS" create deployment big --image=public.ecr.aws/docker/library/busybox:1.37 \
-    --replicas=3 -- sleep 3600
-  kubectl -n "$NS" set resources deployment big --requests=cpu=1,memory=2Gi
-  kubectl -n "$NS" wait --for=condition=Available deployment/big --timeout=600s
-  [ "$(kubectl get nodes --no-headers | wc -l)" -gt "$before" ]
+    --replicas=3 --dry-run=client -o yaml -- sleep 3600 |
+    kubectl set resources --local -f - --requests=cpu=1,memory=2Gi -o yaml |
+    kubectl -n "$NS" apply -f -
+  until [ "$(kubectl get nodes --no-headers | wc -l)" -gt "$before" ]; do
+    [ "$waited" -ge 600 ] && return 1
+    sleep 15
+    waited=$((waited + 15))
+  done
 }
 
 s3_with_node_role() {

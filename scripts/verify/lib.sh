@@ -13,13 +13,26 @@ export CLUSTER_NAME="${CLUSTER_NAME:-data-platform-dev}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export REPO_ROOT
 
+# Secrets are required as variables by the bootstrap root module, also on plan (D-011).
+if [ -f "$REPO_ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$REPO_ROOT/.env"
+  set +a
+fi
+
+# The AWS CLI on Windows ends text output with CRLF; strip the CR so comparisons work in Git Bash.
+aws() {
+  command aws "$@" | tr -d '\r'
+}
+
 _passed=0
 _failed=0
 
 require_tools() {
   local tool
   for tool in "$@"; do
-    if ! command -v "$tool" >/dev/null 2>&1; then
+    if ! type -P "$tool" >/dev/null 2>&1; then
       echo "Missing tool: $tool" >&2
       exit 2
     fi
