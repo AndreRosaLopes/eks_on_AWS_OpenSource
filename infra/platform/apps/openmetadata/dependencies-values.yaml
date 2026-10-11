@@ -6,7 +6,11 @@ mysql:
     database: openmetadata_db
     username: openmetadata_user
     existingSecret: openmetadata-mysql
-  initdbScripts: {}
+  # The chart scripts create the database and users with fixed passwords; the database and user
+  # above (password from the Secret) are enough. null removes the chart keys.
+  initdbScripts:
+    init_openmetadata_db_scripts.sql: null
+    init_airflow_db_scripts.sql: null
   primary:
     persistence:
       size: 10Gi
