@@ -208,11 +208,11 @@ Trino rules (FR-016).
 **Independent Test**: quickstart P6: a processed dataset found in the catalog with lineage, its
 sensitive column classified and masked by Trino.
 
-- [ ] T064 [US6] Create `infra/platform/apps/opensearch/values.yaml` (OpenSearch 3.x chart, single node, reduced heap, gp3 volume, `vm.max_map_count` init container, internal access only; security plugin setting: to verify) and `infra/platform/argocd/opensearch.yaml` (D-025)
-- [ ] T065 [US6] Create `infra/terraform/bootstrap/secrets-openmetadata.tf` (OpenMetadata admin password, namespace `openmetadata`) and `infra/platform/apps/openmetadata/values.yaml`: OpenMetadata ≥ 1.12 chart with its bundled database (D-010), search on the OpenSearch of T064, Kubernetes native ingestion orchestrator with pods on the Spot group, no public Service; then `infra/platform/argocd/openmetadata.yaml`
+- [X] T064 [US6] Create `infra/platform/apps/opensearch/values.yaml` (OpenSearch 3.x chart, single node, reduced heap, gp3 volume, `vm.max_map_count` init container, internal access only; security plugin setting: to verify) and `infra/platform/argocd/opensearch.yaml` (D-025)
+- [X] T065 [US6] Create `infra/terraform/bootstrap/secrets-openmetadata.tf` (OpenMetadata admin password, namespace `openmetadata`) and `infra/platform/apps/openmetadata/values.yaml`: OpenMetadata ≥ 1.12 chart with its bundled database (D-010), search on the OpenSearch of T064, Kubernetes native ingestion orchestrator with pods on the Spot group, no public Service; then `infra/platform/argocd/openmetadata.yaml`
 - [ ] T066 [US6] Commit and push T064–T065, apply `bootstrap` after the user's approval; in OpenMetadata configure the Trino, Airflow and Airbyte connectors and run ingestion and lineage
 - [ ] T067 [US6] Classify one sensitive column in OpenMetadata and add the matching mask to `infra/platform/apps/trino/manifests/access-control.yaml` (FR-016, D-026 impact 1)
-- [ ] T068 [P] [US6] Create `scripts/verify/p6-governance.sh` implementing the checks of quickstart P6 (Applications healthy, dataset in the catalog with lineage, classified column masked for the BI user)
+- [X] T068 [P] [US6] Create `scripts/verify/p6-governance.sh` implementing the checks of quickstart P6 (Applications healthy, dataset in the catalog with lineage, classified column masked for the BI user)
 
 **Checkpoint**: all user stories complete.
 
