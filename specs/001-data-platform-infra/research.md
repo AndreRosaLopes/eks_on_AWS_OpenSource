@@ -2508,6 +2508,7 @@ the teardown review.
 | D-030 | Location of the data bucket in Terraform | Step 0, P1 | Decided: A. Separate persistent root module |
 | D-031 | Automatic validation in CI | All steps | Decided: B. Terraform and YAML checks in GitHub Actions |
 | D-032 | Structure of the Terraform code | Step 0 | Decided: C. Community modules called from the root modules, no local wrappers |
+| D-033 | S3 credentials of the Airbyte S3 Data Lake destination | P1 (Airbyte) | Decided: A. Dedicated IAM user limited to the data bucket |
 
 ---
 
@@ -3036,6 +3037,71 @@ inputs), with the least code.
 - [AWS Prescriptive Guidance: community modules](https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/community.html)
 - To verify in the implementation: latest versions of both modules (EKS v21.x, AWS provider ≥ 6
   required) and support for EKS 1.36; Azure and GCP module names.
+
+---
+
+## D-033 S3 credentials of the Airbyte S3 Data Lake destination
+
+**Status**: Decided
+
+### Context
+
+- Found in the P1 implementation (2026-10-11): the S3 Data Lake destination 0.4.0 rejects the
+  Polaris catalog without an AWS access key ("AWS Access Key ID is required for Polaris
+  configuration"). In its source code only the Glue catalog accepts role-based credentials; REST,
+  Polaris and Nessie require a static key, which is passed to the Iceberg S3 file IO (no credential
+  vending).
+- D-004 gives AWS permissions only through the node role, with no keys.
+- D-012 chose Polaris with Airbyte writing Iceberg directly.
+
+### Options
+
+**A. Dedicated IAM user limited to the data bucket** — Terraform (`bootstrap`) creates the user,
+its policy and access key, and writes the key to a Kubernetes Secret in `airbyte`.
+**B. Airbyte writes Parquet to S3; Trino converts to Iceberg** — the S3 destination accepts the
+instance profile (no key); a later step loads bronze as Iceberg (D-012 option B).
+**C. Glue catalog for bronze** — role-based credentials; second catalog besides Polaris (D-012
+option C).
+
+### Trade-offs
+
+| | A. IAM user | B. Parquet + Trino | C. Glue |
+|---|---|---|---|
+| Keys | One long-term key (data bucket only) | None | None |
+| D-004 | Exception for Airbyte | ✅ | ✅ |
+| D-012 (Iceberg written by Airbyte, Polaris) | ✅ | ❌ conversion step | ❌ second catalog |
+| Key rotation | Manual (`terraform apply -replace`) | — | — |
+| Where the key lives | Terraform state and the cluster Secret (D-011) | — | — |
+
+### Equivalents in the other clouds
+
+| | AWS | Azure | GCP |
+|---|---|---|---|
+| Static credential | IAM user access key | Storage account key or service principal secret | Service account key (JSON) |
+| Keyless credential | Node role / Pod Identity | Managed identity / Workload Identity | Workload Identity |
+| Airbyte Iceberg destination | S3 Data Lake | No equivalent found (to verify) | GCS Data Lake (to verify) |
+
+### In the reference project
+
+Airbyte writes Parquet to MinIO with MinIO keys (closest to option B, D-012).
+
+### Decision
+
+- **Decision**: A. IAM user `data-platform-dev-airbyte-iceberg-writer` with `ListBucket` on the
+  data bucket and `Get/Put/DeleteObject` on its objects; key in the Secret
+  `airbyte/airbyte-iceberg-writer` (`infra/terraform/bootstrap/airbyte-iceberg-writer.tf`).
+- **Rationale**: keeps D-012 (Iceberg written by Airbyte into Polaris) with the smallest scope for
+  the key.
+- **Chosen by**: the user, 2026-10-11.
+- **Related change**: the Polaris catalog enables `polaris.config.drop-with-purge.enabled`, needed
+  by the destination check (creates and drops a test table).
+
+### Sources
+
+- [Airbyte S3 Data Lake destination](https://docs.airbyte.com/integrations/destinations/s3-data-lake)
+- Connector source: `airbyte-integrations/connectors/destination-s3-data-lake/.../S3DataLakeUtil.kt`
+  (airbytehq/airbyte)
+- [Polaris FeatureConfiguration 1.8.0 (`DROP_WITH_PURGE_ENABLED`)](https://github.com/apache/polaris/blob/apache-polaris-1.8.0/polaris-core/src/main/java/org/apache/polaris/core/config/FeatureConfiguration.java)
 
 ---
 

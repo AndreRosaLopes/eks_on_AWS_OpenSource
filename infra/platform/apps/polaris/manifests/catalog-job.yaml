@@ -1,6 +1,6 @@
 # Creates the Iceberg catalog on the data bucket and the medallion namespaces (D-012, D-030).
 # S3 access uses the node role; Polaris vends no credentials (stsUnavailable). Idempotent: an
-# existing catalog or namespace answers 409 and is skipped.
+# existing catalog or namespace answers 409 and is skipped; the catalog properties are then updated.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -37,16 +37,25 @@ spec:
                 -d "client_secret=$CLIENT_SECRET" -d scope=PRINCIPAL_ROLE:ALL \
                 | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
               [ -n "$token" ]
-              post() {
-                code=$(curl -s -o /tmp/out -w '%{http_code}' -X POST "$1" \
-                  -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$2")
-                echo "$1 -> $code"
+              send() {
+                code=$(curl -s -o /tmp/out -w '%{http_code}' -X "$1" "$2" \
+                  -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "$3")
+                echo "$1 $2 -> $code"
                 case "$code" in 2*|409) ;; *) cat /tmp/out; exit 1 ;; esac
               }
+              post() { send POST "$1" "$2"; }
+              # Drop with purge is needed by the Airbyte S3 Data Lake destination check.
+              properties="{\"default-base-location\":\"s3://$BUCKET/lakehouse\",
+                \"polaris.config.drop-with-purge.enabled\":\"true\"}"
               post "$api/management/v1/catalogs" "{\"catalog\":{\"name\":\"lakehouse\",\"type\":\"INTERNAL\",
-                \"properties\":{\"default-base-location\":\"s3://$BUCKET/lakehouse\"},
+                \"properties\":$properties,
                 \"storageConfigInfo\":{\"storageType\":\"S3\",\"allowedLocations\":[\"s3://$BUCKET/\"],
                 \"region\":\"us-east-2\",\"stsUnavailable\":true}}}"
+              # An existing catalog gets the current properties.
+              version=$(curl -sf "$api/management/v1/catalogs/lakehouse" -H "Authorization: Bearer $token" \
+                | sed -n 's/.*"entityVersion":\([0-9]*\).*/\1/p')
+              send PUT "$api/management/v1/catalogs/lakehouse" \
+                "{\"currentEntityVersion\":$version,\"properties\":$properties}"
               for ns in bronze silver gold; do
                 post "$api/catalog/v1/lakehouse/namespaces" "{\"namespace\":[\"$ns\"]}"
               done
