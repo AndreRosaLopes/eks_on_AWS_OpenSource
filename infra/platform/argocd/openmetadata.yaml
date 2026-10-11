@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openmetadata
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: https://helm.open-metadata.org
+      chart: openmetadata-dependencies
+      targetRevision: 2.0.5
+      helm:
+        releaseName: openmetadata-dependencies
+        valueFiles:
+          - $values/infra/platform/apps/openmetadata/dependencies-values.yaml
+    - repoURL: https://helm.open-metadata.org
+      chart: openmetadata
+      targetRevision: 2.0.5
+      helm:
+        releaseName: openmetadata
+        valueFiles:
+          - $values/infra/platform/apps/openmetadata/values.yaml
+    - repoURL: https://github.com/AndreRosaLopes/eks_on_AWS_OpenSource
+      targetRevision: main
+      ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: openmetadata
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

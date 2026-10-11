@@ -1,0 +1,42 @@
+# OpenMetadata (P6): catalog, lineage and classification (FR-016). Search on the OpenSearch
+# application (D-025); ingestion as Kubernetes jobs on the Spot group. UI only through
+# kubectl port-forward; the initial admin password is changed at the first login.
+openmetadata:
+  config:
+    elasticsearch:
+      host: opensearch-cluster-master
+      searchType: opensearch
+      port: 9200
+      scheme: http
+    database:
+      host: mysql
+      auth:
+        username: openmetadata_user
+        password:
+          secretRef: openmetadata-mysql
+          secretKey: mysql-password
+    pipelineServiceClientConfig:
+      type: k8s
+      k8s:
+        namespace: openmetadata
+        ingestionImage: docker.getcollate.io/openmetadata/ingestion-base:2.0.5
+        nodeSelector:
+          capacity: spot
+        tolerations:
+          - key: capacity
+            operator: Equal
+            value: spot
+            effect: NoSchedule
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+image:
+  tag: 2.0.5
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 2Gi

@@ -1,0 +1,22 @@
+# OpenMetadata bundled database (D-010): MySQL only; search is the OpenSearch application (D-025)
+# and ingestion runs as Kubernetes jobs, so the bundled OpenSearch and Airflow are disabled.
+mysql:
+  enabled: true
+  auth:
+    database: openmetadata_db
+    username: openmetadata_user
+    existingSecret: openmetadata-mysql
+  initdbScripts: {}
+  primary:
+    persistence:
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+
+opensearch:
+  enabled: false
+
+airflow:
+  enabled: false
