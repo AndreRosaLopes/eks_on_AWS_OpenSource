@@ -20,8 +20,8 @@ openmetadata:
       k8s:
         namespace: openmetadata
         ingestionImage: docker.getcollate.io/openmetadata/ingestion-base:2.0.5
-        nodeSelector:
-          capacity: spot
+        # Comma-separated key=value pairs (chart schema).
+        nodeSelector: capacity=spot
         tolerations:
           - key: capacity
             operator: Equal
