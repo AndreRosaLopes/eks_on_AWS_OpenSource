@@ -1,6 +1,7 @@
 # One public entry for the platform (D-016): one NLB created by the AWS Load Balancer Controller
 # (D-016b) with two listeners: HTTP for Metabase (contracts/bi-access.md) and TCP for Trino, whose
-# TLS is not terminated here (contracts/external-systems.md, D-028).
+# TLS is not terminated here (contracts/external-systems.md, D-028). Fields the Gateway API
+# defaults are written out so Argo CD sees no difference.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -60,7 +61,8 @@ spec:
         namespaces:
           from: All
         kinds:
-          - kind: TCPRoute
+          - group: gateway.networking.k8s.io
+            kind: TCPRoute
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -69,13 +71,22 @@ metadata:
   namespace: metabase
 spec:
   parentRefs:
-    - name: platform
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
       namespace: envoy-gateway-system
       sectionName: bi
   rules:
-    - backendRefs:
-        - name: metabase
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: metabase
           port: 3000
+          weight: 1
 ---
 apiVersion: gateway.networking.k8s.io/v1alpha2
 kind: TCPRoute
@@ -84,10 +95,15 @@ metadata:
   namespace: trino
 spec:
   parentRefs:
-    - name: platform
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
       namespace: envoy-gateway-system
       sectionName: trino
   rules:
     - backendRefs:
-        - name: trino
+        - group: ""
+          kind: Service
+          name: trino
           port: 8443
+          weight: 1
