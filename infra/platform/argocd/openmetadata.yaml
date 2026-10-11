@@ -28,6 +28,13 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: openmetadata
+  # The API server adds defaults and status to the MySQL volume claim template (immutable field).
+  ignoreDifferences:
+    - group: apps
+      kind: StatefulSet
+      name: mysql
+      jqPathExpressions:
+        - .spec.volumeClaimTemplates
   syncPolicy:
     automated:
       prune: true
